@@ -65,3 +65,4 @@ if audio_buffer:
     plt.show()
 else:
     print("No audio recorded")
+    print("Thank You")
