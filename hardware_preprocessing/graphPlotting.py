@@ -3,7 +3,7 @@ import time
 import matplotlib.pyplot as plt
 
 # ================= SERIAL CONFIG =================
-PORT = 'COM3'
+PORT = 'COM3'        # change if needed
 BAUD = 115200
 ser = serial.Serial(PORT, BAUD, timeout=1)
 
