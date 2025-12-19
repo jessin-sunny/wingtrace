@@ -2,6 +2,7 @@ import serial
 import wave
 import numpy as np
 
+
 PORT = "COM3"
 BAUD = 921600
 SAMPLE_RATE = 16000
@@ -52,3 +53,4 @@ print("Max:", pcm_array.max())
 print("Mean:", pcm_array.mean())
 
 print("\nSaved recording.wav and recording.npy")
+
