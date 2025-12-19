@@ -1,21 +1,54 @@
-import serial, wave
+import serial
+import wave
+import numpy as np
 
-ser = serial.Serial("COM3", 921600, timeout=1)
+PORT = "COM3"
+BAUD = 921600
+SAMPLE_RATE = 16000
+SECONDS = 10
+CHUNK = 4096
+
+ser = serial.Serial(PORT, BAUD, timeout=1)
 
 frames = []
-seconds = 10
-sample_rate = 16000
-bytes_needed = seconds * sample_rate * 2
+bytes_needed = SAMPLE_RATE * 2 * SECONDS
+
+print("Recording...")
 
 while sum(len(f) for f in frames) < bytes_needed:
-    frames.append(ser.read(4096))
+    data = ser.read(CHUNK)
+    if data:
+        frames.append(data)
 
 ser.close()
 
-pcm = b"".join(frames)
+# Combine all bytes
+pcm_bytes = b"".join(frames)
 
+# ---- IMPORTANT: align to int16 ----
+pcm_bytes = pcm_bytes[:len(pcm_bytes) // 2 * 2]
+
+# ---- Convert to numpy array ----
+pcm_array = np.frombuffer(pcm_bytes, dtype=np.int16)
+
+# ---- Save WAV ----
 with wave.open("recording.wav", "wb") as wf:
     wf.setnchannels(1)
     wf.setsampwidth(2)
-    wf.setframerate(sample_rate)
-    wf.writeframes(pcm)
+    wf.setframerate(SAMPLE_RATE)
+    wf.writeframes(pcm_bytes)
+
+# ---- Save NPY ----
+np.save("recording.npy", pcm_array)
+
+# ---- Print values (SAFE & READABLE) ----
+print("\nFirst 20 PCM values:")
+print(pcm_array[:20])
+
+print("\nStats:")
+print("Shape:", pcm_array.shape)
+print("Min:", pcm_array.min())
+print("Max:", pcm_array.max())
+print("Mean:", pcm_array.mean())
+
+print("\nSaved recording.wav and recording.npy")
