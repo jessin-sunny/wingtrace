@@ -4,6 +4,9 @@ import 'history_screen.dart';
 import 'analytics_screen.dart';
 import 'settings_screen.dart';
 import 'profile_screen.dart';
+import 'accuracy_summary_screen.dart';
+import 'detection_count_screen.dart';
+import 'last_detected_screen.dart';
 
 class UserDashboard extends StatefulWidget {
   const UserDashboard({super.key});
@@ -133,12 +136,22 @@ class _UserDashboardState extends State<UserDashboard> {
                           style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 18),
                         ),
                         const SizedBox(height: 15),
+                        // Inside the Quick Summary Container
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceAround,
                           children: [
-                            _summaryItem(Icons.list_alt, 'accuracy\nsummary'),
-                            _summaryItem(Icons.touch_app, 'detection\ncount today'),
-                            _summaryItem(Icons.access_time, 'last\ndetected\npest'),
+                            GestureDetector(
+                              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const AccuracySummaryScreen())),
+                              child: _summaryItem(Icons.list_alt, 'accuracy\nsummary'),
+                            ),
+                            GestureDetector(
+                              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const DetectionCountScreen())),
+                              child: _summaryItem(Icons.touch_app, 'detection\ncount today'),
+                            ),
+                            GestureDetector(
+                              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const LastDetectedScreen())),
+                              child: _summaryItem(Icons.access_time, 'last\ndetected\npest'),
+                            ),
                           ],
                         ),
                       ],
