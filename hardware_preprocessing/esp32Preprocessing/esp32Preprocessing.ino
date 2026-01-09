@@ -1,4 +1,5 @@
 #include <driver/i2s.h>
+#include "DHT.h"
 
 // -------------------
 // PIN CONFIGURATION
@@ -7,24 +8,26 @@
 #define I2S_WS   25
 #define I2S_SD   34
 
-#define GREEN_LED 13
-#define RED_LED   27
+#define DHTPIN   13
+#define DHTTYPE  DHT11
 
 #define SAMPLE_RATE 16000
 #define BUFFER_LEN  256   // samples
 
 int16_t buffer[BUFFER_LEN];
 
-unsigned long lastBlink = 0;
-bool ledState = false;
+DHT dht(DHTPIN, DHTTYPE);
+
+unsigned long lastDHTRead = 0;
 
 void setup() {
-  Serial.begin(921600);   // IMPORTANT
+  Serial.begin(921600);
   delay(1000);
 
-  pinMode(GREEN_LED, OUTPUT);
-  pinMode(RED_LED, OUTPUT);
+  // Init DHT11
+  dht.begin();
 
+  // I2S config
   i2s_config_t cfg = {
     .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
     .sample_rate = SAMPLE_RATE,
@@ -52,24 +55,25 @@ void setup() {
 void loop() {
   size_t bytes_read;
 
+  // -------- AUDIO --------
   i2s_read(I2S_NUM_0, buffer, sizeof(buffer), &bytes_read, portMAX_DELAY);
-
-  
-
-  // Send RAW PCM
   Serial.write((uint8_t*)buffer, bytes_read);
+  /*
+  // -------- DHT11 (every 2 sec) --------
+  if (millis() - lastDHTRead > 2000) {
+    float hum = dht.readHumidity();
+    float temp = dht.readTemperature();
 
-  // GREEN LED heartbeat
-  if (millis() - lastBlink > 1000) {
-    ledState = !ledState;
-    digitalWrite(GREEN_LED, ledState);
-    lastBlink = millis();
-  }
+    if (!isnan(temp) && !isnan(hum)) {
+      Serial.print("TEMP:");
+      Serial.print(temp);
+      Serial.print(",HUM:");
+      Serial.println(hum);
+    } else {
+      Serial.println("DHT11 read error");
+    }
 
-  // RED LED for loud sound
-  if (abs(buffer[0]) > 2000) {
-    digitalWrite(RED_LED, HIGH);
-  } else {
-    digitalWrite(RED_LED, LOW);
+    lastDHTRead = millis();
   }
+  */
 }
