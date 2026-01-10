@@ -6,9 +6,8 @@ class AuthService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
 
   // 1. Sign Up (Create Account & Store in Database)
-  Future<String?> signUp(String email, String password, String name) async {
+  Future<String?> signUp(String email, String password, String name, String role) async {
     try {
-      // Create User in Firebase Auth
       UserCredential result = await _auth.createUserWithEmailAndPassword(
         email: email, 
         password: password
@@ -16,19 +15,19 @@ class AuthService {
       
       User? user = result.user;
 
-      // Create User Document in Firestore (Critical for your Logic!)
+      // Save user details + role to Firestore
       await _db.collection('users').doc(user!.uid).set({
         'uid': user.uid,
         'email': email,
         'name': name,
-        'role': 'farmer', // Default role
+        'role': role, // <--- This saves 'farmer' or 'officer'
         'created_at': FieldValue.serverTimestamp(),
-        'owned_devices': [], // Empty list initially
+        'owned_devices': [],
       });
 
-      return null; // Success (null means no error)
+      return null; // Success
     } on FirebaseAuthException catch (e) {
-      return e.message; // Return error message to show in UI
+      return e.message;
     }
   }
 

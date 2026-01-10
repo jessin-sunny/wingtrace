@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import '../services/auth_service.dart';
+import 'user_dashboard.dart'; // Ensure this matches your file name
+import 'officer_dashboard.dart';
 
 class SignUpPage extends StatefulWidget {
   const SignUpPage({super.key});
@@ -8,9 +11,63 @@ class SignUpPage extends StatefulWidget {
 }
 
 class _SignUpPageState extends State<SignUpPage> {
-  // 1. Define the list of roles and a variable to store the selection
+  // --- LOGIC START ---
+  final AuthService _authService = AuthService();
+  
+  // 1. Controllers to capture text input
+  final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _phoneController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
+  final TextEditingController _confirmPassController = TextEditingController();
+
   final List<String> _roles = ['Regular User', 'Agricultural/Health Officer'];
-  String? _selectedRole; // This starts as null so the hint shows up
+  String? _selectedRole;
+  bool _isLoading = false;
+
+  void _handleSignUp() async {
+    // Basic Validation
+    if (_nameController.text.isEmpty || 
+        _emailController.text.isEmpty || 
+        _passwordController.text.isEmpty ||
+        _selectedRole == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please fill all fields")));
+      return;
+    }
+
+    if (_passwordController.text != _confirmPassController.text) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Passwords do not match")));
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    // Map UI Role to Database Role
+    String dbRole = (_selectedRole == 'Agricultural/Health Officer') ? 'officer' : 'farmer';
+
+    // Call Firebase
+    String? error = await _authService.signUp(
+      _emailController.text.trim(),
+      _passwordController.text.trim(),
+      _nameController.text.trim(),
+      dbRole 
+    );
+
+    if (!mounted) return;
+    setState(() => _isLoading = false);
+
+    if (error == null) {
+      // Success: Route to correct Dashboard
+      if (dbRole == 'officer') {
+        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const OfficerDashboard()));
+      } else {
+        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const UserDashboard()));
+      }
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+    }
+  }
+  // --- LOGIC END ---
 
   @override
   Widget build(BuildContext context) {
@@ -38,11 +95,19 @@ class _SignUpPageState extends State<SignUpPage> {
                   ),
                   child: Column(
                     children: [
-                      const TextField(decoration: InputDecoration(hintText: 'Full Name')),
-                      const TextField(decoration: InputDecoration(hintText: 'Email/username')),
-                      const TextField(decoration: InputDecoration(hintText: 'Mobile No.')),
+                      TextField(
+                        controller: _nameController, // Added Controller
+                        decoration: const InputDecoration(hintText: 'Full Name'),
+                      ),
+                      TextField(
+                        controller: _emailController, // Added Controller
+                        decoration: const InputDecoration(hintText: 'Email/username'),
+                      ),
+                      TextField(
+                        controller: _phoneController, // Added Controller
+                        decoration: const InputDecoration(hintText: 'Mobile No.'),
+                      ),
                       
-                      // 2. The Role Dropdown Widget
                       DropdownButtonFormField<String>(
                         value: _selectedRole,
                         hint: const Text('Select Role'),
@@ -64,21 +129,30 @@ class _SignUpPageState extends State<SignUpPage> {
                         },
                       ),
 
-                      const TextField(obscureText: true, decoration: InputDecoration(hintText: 'Password')),
-                      const TextField(obscureText: true, decoration: InputDecoration(hintText: 'Confirm Password')),
+                      TextField(
+                        controller: _passwordController, // Added Controller
+                        obscureText: true, 
+                        decoration: const InputDecoration(hintText: 'Password')
+                      ),
+                      TextField(
+                        controller: _confirmPassController, // Added Controller
+                        obscureText: true, 
+                        decoration: const InputDecoration(hintText: 'Confirm Password')
+                      ),
                       const SizedBox(height: 25),
                       
                       SizedBox(
                         width: double.infinity,
                         child: ElevatedButton(
-                          onPressed: () {
-                            print("Selected Role: $_selectedRole");
-                          },
+                          onPressed: _isLoading ? null : _handleSignUp, // Connected Logic
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.green[700],
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
                           ),
-                          child: const Text('Register', style: TextStyle(color: Colors.white)),
+                          // Added Loading Indicator support
+                          child: _isLoading 
+                            ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                            : const Text('Register', style: TextStyle(color: Colors.white)),
                         ),
                       ),
                     ],
