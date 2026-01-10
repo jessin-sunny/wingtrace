@@ -1,6 +1,10 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'login_screen.dart'; // Ensure this import is correct
+import 'package:firebase_auth/firebase_auth.dart'; // 1. Add Auth
+import 'package:cloud_firestore/cloud_firestore.dart'; // 2. Add Firestore
+import 'login_screen.dart';
+import 'user_dashboard.dart';    // 3. Import Dashboards
+import 'officer_dashboard.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -10,7 +14,7 @@ class SplashScreen extends StatefulWidget {
 }
 
 class _SplashScreenState extends State<SplashScreen> {
-  double _progress = 0.1; // Starts at 10% based on your SS
+  double _progress = 0.1; 
 
   @override
   void initState() {
@@ -21,27 +25,67 @@ class _SplashScreenState extends State<SplashScreen> {
   void _startLoading() {
     // Timer updates the bar every 30ms for a smooth animation
     Timer.periodic(const Duration(milliseconds: 30), (timer) {
-      setState(() {
-        if (_progress < 1.0) {
-          _progress += 0.01;
-        } else {
-          timer.cancel();
-          _navigateToLogin();
-        }
-      });
+      if (mounted) { // Check if widget is still on screen
+        setState(() {
+          if (_progress < 1.0) {
+            _progress += 0.01;
+          } else {
+            timer.cancel();
+            _checkLoginStatus(); // CHANGED: Call the smart check function
+          }
+        });
+      }
     });
   }
 
-  void _navigateToLogin() {
-    // pushReplacement ensures the user can't "Go Back" to the loading screen
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (context) => const LoginPage()),
-    );
+  // NEW: Smart Navigation Logic
+  Future<void> _checkLoginStatus() async {
+    // 1. Check if user is logged in
+    User? currentUser = FirebaseAuth.instance.currentUser;
+
+    if (currentUser == null) {
+      // Not logged in? Go to Login
+      _navigate(const LoginPage());
+    } else {
+      // 2. Logged in? Check their role in Database
+      try {
+        DocumentSnapshot userDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(currentUser.uid)
+            .get();
+
+        if (userDoc.exists) {
+          String role = userDoc.get('role');
+          
+          // 3. Route to correct Dashboard
+          if (role == 'officer' || role == 'admin') {
+            _navigate(const OfficerDashboard());
+          } else {
+            _navigate(const UserDashboard());
+          }
+        } else {
+          // Fallback if DB record is missing
+          _navigate(const UserDashboard());
+        }
+      } catch (e) {
+        // If error (e.g., no internet), go to Login safely
+        _navigate(const LoginPage());
+      }
+    }
+  }
+
+  void _navigate(Widget screen) {
+    if (mounted) {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => screen),
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    // YOUR UI CODE REMAINS EXACTLY THE SAME
     return Scaffold(
       backgroundColor: const Color(0xFFFDFBE7),
       body: Center(
@@ -50,7 +94,6 @@ class _SplashScreenState extends State<SplashScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // Logo and Title
               const Icon(Icons.webhook, size: 100, color: Colors.green),
               const Text(
                 'WingTrace',
@@ -67,7 +110,6 @@ class _SplashScreenState extends State<SplashScreen> {
               ),
               const SizedBox(height: 80),
 
-              // The Loading Bar
               Stack(
                 alignment: Alignment.centerRight,
                 children: [

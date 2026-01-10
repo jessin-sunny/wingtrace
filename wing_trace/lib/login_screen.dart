@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import '../services/auth_service.dart'; // Import your service
 import 'signup_screen.dart';
 import 'officer_dashboard.dart';
 import 'user_dashboard.dart';
 
-
-// 1. We change this to a StatefulWidget
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
 
@@ -13,9 +14,60 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> {
+  // 1. Service & Controllers
+  final AuthService _authService = AuthService();
+  final TextEditingController _emailController = TextEditingController(); // Renamed for clarity
+  final TextEditingController _passwordController = TextEditingController(); // Added password controller
+  
   bool _isObscured = true;
-  // Add these controllers to capture text
-  final TextEditingController _userController = TextEditingController();
+  bool _isLoading = false; // To show spinner
+
+  // 2. The Login Logic
+  void _handleLogin() async {
+    if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please fill all fields")));
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    // A. Sign In with Firebase Auth
+    String? error = await _authService.signIn(
+      _emailController.text.trim(),
+      _passwordController.text.trim(),
+    );
+
+    if (error != null) {
+      // Login Failed
+      setState(() => _isLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+    } else {
+      // B. Login Success -> Fetch Role from Firestore
+      try {
+        String uid = FirebaseAuth.instance.currentUser!.uid;
+        DocumentSnapshot userDoc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
+        
+        setState(() => _isLoading = false);
+
+        if (userDoc.exists) {
+          String role = userDoc.get('role'); // 'farmer', 'officer', etc.
+          
+          // C. Navigate based on Database Role
+          if (role == 'officer' || role == 'admin') {
+            Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const OfficerDashboard()));
+          } else {
+            Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const UserDashboard()));
+          }
+        } else {
+           // Fallback if doc missing
+           Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const UserDashboard()));
+        }
+      } catch (e) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error fetching role: $e")));
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -43,12 +95,15 @@ class _LoginPageState extends State<LoginPage> {
                   ),
                   child: Column(
                     children: [
+                      // Email Field
                       TextField(
-                        controller: _userController, // Assign controller
-                        decoration: const InputDecoration(hintText: 'username'),
+                        controller: _emailController, // Connected controller
+                        decoration: const InputDecoration(hintText: 'email'), // Firebase needs email, not username
                       ),
                       const SizedBox(height: 15),
+                      // Password Field
                       TextField(
+                        controller: _passwordController, // Connected controller
                         obscureText: _isObscured,
                         decoration: InputDecoration(
                           hintText: 'password',
@@ -59,33 +114,22 @@ class _LoginPageState extends State<LoginPage> {
                         ),
                       ),
                       const SizedBox(height: 25),
+                      
+                      // Login Button
                       SizedBox(
                         width: double.infinity,
                         child: ElevatedButton(
-                          onPressed: () {
-                            // ROLE BASED NAVIGATION LOGIC
-                            String userText = _userController.text.toLowerCase();
-                            
-                            if (userText.contains('officer') || userText.contains('admin')) {
-                              Navigator.pushReplacement(
-                                context,
-                                MaterialPageRoute(builder: (context) => const OfficerDashboard()),
-                              );
-                            } else {
-                              Navigator.pushReplacement(
-                                context,
-                                MaterialPageRoute(builder: (context) => const UserDashboard()),
-                              );
-                            }
-                          },
+                          onPressed: _isLoading ? null : _handleLogin, // Disable if loading
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.green[700],
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
                           ),
-                          child: const Text('login', style: TextStyle(color: Colors.white)),
+                          child: _isLoading 
+                            ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                            : const Text('login', style: TextStyle(color: Colors.white)),
                         ),
                       ),
-                      // ... rest of your TextButton code
+                      
                       TextButton(
                         onPressed: () {},
                         child: const Text('forgot password?', style: TextStyle(color: Colors.grey)),
