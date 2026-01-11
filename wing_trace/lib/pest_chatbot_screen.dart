@@ -11,7 +11,7 @@ class PestChatbotScreen extends StatefulWidget {
 class _PestChatbotScreenState extends State<PestChatbotScreen> {
   final TextEditingController _controller = TextEditingController();
   final List<Map<String, String>> _messages = [
-    {"role": "bot", "text": "Hello! I am your WingTrace Assistant. Ask me anything about pests, or select a quick question below."}
+    {"role": "bot", "text": "Hello! I am Tracy, your WingTrace Assistant. Ask me anything about pests, or select a quick question below."}
   ];
   bool _isLoading = false;
 
@@ -29,12 +29,12 @@ class _PestChatbotScreenState extends State<PestChatbotScreen> {
     if (_apiKey.isEmpty) {
       debugPrint("WARNING: API Key is empty. Did you run with --dart-define-from-file?");
     }
-    
+
     // Initialize Gemini with a "System Instruction" to keep it on topic
     _model = GenerativeModel(
-      model: 'gemini-2.5-flash',
+      model: 'gemini-2.5-flash-lite',
       apiKey: _apiKey,
-      systemInstruction: Content.system("You are a pest control expert for the WingTrace app. "
+      systemInstruction: Content.system("You are Tracy,a pest control expert for the WingTrace app. "
           "Provide concise, scientific, and helpful advice about mosquitoes and agricultural pests. "
           "If the user asks about something unrelated to pests or the app, politely redirect them."),
     );
@@ -68,7 +68,7 @@ class _PestChatbotScreenState extends State<PestChatbotScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Pest Assistant")),
+      appBar: AppBar(title: const Text("TRACY - Pest Chatbot")),
       body: Column(
         children: [
           Expanded(

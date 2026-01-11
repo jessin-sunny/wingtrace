@@ -80,7 +80,18 @@ class _LoginPageState extends State<LoginPage> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Icon(Icons.webhook, size: 80, color: Colors.green),
+                Transform.translate(
+                  offset: const Offset(0, 20),
+                  child:
+                    Image.asset(
+                      'assets/logo.png', // The path to your actual logo
+                      height: 170,       // Adjust size as needed
+                      width: 170,
+                      errorBuilder: (context, error, stackTrace) => 
+                          const Icon(Icons.webhook, size: 80, color: Colors.green), // Fallback if image fails
+                    ),
+                ),
+                const SizedBox(height: 5),
                 const Text(
                   'Sign In',
                   style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: Colors.green),

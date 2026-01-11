@@ -79,7 +79,18 @@ class _SignUpPageState extends State<SignUpPage> {
             padding: const EdgeInsets.symmetric(horizontal: 30),
             child: Column(
               children: [
-                const Icon(Icons.webhook, size: 80, color: Colors.green),
+                Transform.translate(
+                  offset: const Offset(0, 20),
+                  child:
+                    Image.asset(
+                      'assets/logo.png', // The path to your actual logo
+                      height: 170,       // Adjust size as needed
+                      width: 170,
+                      errorBuilder: (context, error, stackTrace) => 
+                          const Icon(Icons.webhook, size: 80, color: Colors.green), // Fallback if image fails
+                    ),
+                ),
+                const SizedBox(height: 5),
                 const Text(
                   'Sign Up',
                   style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: Colors.green),

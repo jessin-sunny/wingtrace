@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart'; 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'detection_screen.dart'; 
 import 'history_screen.dart';
 import 'analytics_screen.dart';
@@ -18,7 +20,9 @@ class UserDashboard extends StatefulWidget {
 
 class _UserDashboardState extends State<UserDashboard> {
   bool _isConnected = false;
-  final String _deviceName = "WingTrace Pro v1";
+  final String _deviceName = "WingTrace v1";
+
+  final User? _user = FirebaseAuth.instance.currentUser;
 
   final List<String> _pestFacts = [
     "Only female mosquitoes bite; they need blood protein for their eggs.",
@@ -153,10 +157,30 @@ class _UserDashboardState extends State<UserDashboard> {
                         child: Icon(Icons.person, size: 50, color: Colors.grey),
                       ),
                       const SizedBox(height: 10),
-                      const Text(
-                        'username',
-                        style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+                      StreamBuilder<DocumentSnapshot>(
+                        stream: FirebaseFirestore.instance
+                            .collection('users')
+                            .doc(_user?.uid)
+                            .snapshots(),
+                        builder: (context, snapshot) {
+                          String name = "Guest User"; // Fallback name
+
+                          if (snapshot.hasData && snapshot.data!.exists) {
+                            final data = snapshot.data!.data() as Map<String, dynamic>;
+                            name = data['name'] ?? "WingTrace User";
+                          }
+
+                          return Text(
+                            name,
+                            style: const TextStyle(
+                              color: Colors.white, 
+                              fontSize: 20, 
+                              fontWeight: FontWeight.bold
+                            ),
+                          );
+                        },
                       ),
+                      // ------------------------------------------
                     ],
                   ),
                 ),
