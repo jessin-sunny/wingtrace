@@ -15,33 +15,23 @@ class _PestChatbotScreenState extends State<PestChatbotScreen> {
   ];
   bool _isLoading = false;
 
-  // --- 1. CONFIGURATION ---
-  // PRO TIP: In a real app, don't hardcode this. Use a .env file or Firebase Remote Config.
   static const String _apiKey = String.fromEnvironment('API_KEY');
-
   late final GenerativeModel _model;
   late final ChatSession _chat;
 
   @override
   void initState() {
     super.initState();
-    // Safety check: Alert yourself if the key wasn't loaded
-    if (_apiKey.isEmpty) {
-      debugPrint("WARNING: API Key is empty. Did you run with --dart-define-from-file?");
-    }
-
-    // Initialize Gemini with a "System Instruction" to keep it on topic
     _model = GenerativeModel(
       model: 'gemini-2.5-flash-lite',
       apiKey: _apiKey,
-      systemInstruction: Content.system("You are Tracy,a pest control expert for the WingTrace app. "
+      systemInstruction: Content.system("You are Tracy, a pest control expert for the WingTrace app. "
           "Provide concise, scientific, and helpful advice about mosquitoes and agricultural pests. "
           "If the user asks about something unrelated to pests or the app, politely redirect them."),
     );
     _chat = _model.startChat();
   }
 
-  // --- 2. SEND LOGIC ---
   Future<void> _sendMessage(String text) async {
     if (text.trim().isEmpty) return;
 
@@ -68,7 +58,13 @@ class _PestChatbotScreenState extends State<PestChatbotScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("TRACY - Pest Chatbot")),
+      backgroundColor: const Color(0xFFFDFBE7), // Matching your dashboard background
+      appBar: AppBar(
+        title: const Text("TRACY - Assistant"),
+        backgroundColor: Colors.green,
+        foregroundColor: Colors.white,
+        elevation: 0,
+      ),
       body: Column(
         children: [
           Expanded(
@@ -82,9 +78,22 @@ class _PestChatbotScreenState extends State<PestChatbotScreen> {
               },
             ),
           ),
-          if (_isLoading) const Padding(padding: EdgeInsets.all(8.0), child: LinearProgressIndicator(color: Colors.green)),
-          _buildQuickActions(),
-          _buildInputArea(),
+          if (_isLoading) 
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 20), 
+              child: LinearProgressIndicator(color: Colors.green, backgroundColor: Colors.transparent)
+            ),
+          
+          // --- WRAP BOTTOM AREA IN SAFE AREA ---
+          SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _buildQuickActions(),
+                _buildInputArea(),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -94,31 +103,42 @@ class _PestChatbotScreenState extends State<PestChatbotScreen> {
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 5),
-        padding: const EdgeInsets.all(12),
+        margin: const EdgeInsets.symmetric(vertical: 8),
+        padding: const EdgeInsets.all(14),
         constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
         decoration: BoxDecoration(
-          color: isUser ? Colors.green : Colors.grey[300],
-          borderRadius: BorderRadius.circular(15).copyWith(
-            bottomRight: isUser ? const Radius.circular(0) : const Radius.circular(15),
-            bottomLeft: isUser ? const Radius.circular(15) : const Radius.circular(0),
+          color: isUser ? Colors.green : Colors.white,
+          border: isUser ? null : Border.all(color: Colors.green.withOpacity(0.2)),
+          boxShadow: [
+            BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 5, offset: const Offset(0, 2))
+          ],
+          borderRadius: BorderRadius.circular(20).copyWith(
+            bottomRight: isUser ? const Radius.circular(0) : const Radius.circular(20),
+            bottomLeft: isUser ? const Radius.circular(20) : const Radius.circular(0),
           ),
         ),
-        child: Text(text, style: TextStyle(color: isUser ? Colors.white : Colors.black87)),
+        child: Text(
+          text, 
+          style: TextStyle(color: isUser ? Colors.white : Colors.black87, fontSize: 15)
+        ),
       ),
     );
   }
 
   Widget _buildQuickActions() {
     final questions = ["Prevent Aedes?", "Dengue symptoms?", "Best repellents?"];
-    return SizedBox(
-      height: 40,
+    return Container(
+      height: 50,
+      padding: const EdgeInsets.symmetric(vertical: 5),
       child: ListView(
         scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
         children: questions.map((q) => Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 5),
+          padding: const EdgeInsets.symmetric(horizontal: 4),
           child: ActionChip(
-            label: Text(q, style: const TextStyle(fontSize: 12)),
+            backgroundColor: Colors.white,
+            side: const BorderSide(color: Colors.green),
+            label: Text(q, style: const TextStyle(fontSize: 12, color: Colors.green)),
             onPressed: () => _sendMessage(q),
           ),
         )).toList(),
@@ -128,18 +148,40 @@ class _PestChatbotScreenState extends State<PestChatbotScreen> {
 
   Widget _buildInputArea() {
     return Container(
-      padding: const EdgeInsets.all(10),
-      color: Colors.white,
+      padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, -5))
+        ],
+      ),
       child: Row(
         children: [
           Expanded(
-            child: TextField(
-              controller: _controller,
-              decoration: const InputDecoration(hintText: "Type your question...", border: InputBorder.none),
-              onSubmitted: _sendMessage,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 15),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF5F5F5),
+                borderRadius: BorderRadius.circular(30),
+              ),
+              child: TextField(
+                controller: _controller,
+                decoration: const InputDecoration(
+                  hintText: "Ask Tracy...", 
+                  border: InputBorder.none,
+                ),
+                onSubmitted: _sendMessage,
+              ),
             ),
           ),
-          IconButton(icon: const Icon(Icons.send, color: Colors.green), onPressed: () => _sendMessage(_controller.text)),
+          const SizedBox(width: 10),
+          CircleAvatar(
+            backgroundColor: Colors.green,
+            child: IconButton(
+              icon: const Icon(Icons.send, color: Colors.white, size: 20),
+              onPressed: () => _sendMessage(_controller.text),
+            ),
+          ),
         ],
       ),
     );
