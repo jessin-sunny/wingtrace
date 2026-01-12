@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import '../services/auth_service.dart'; // Import your service
 import 'signup_screen.dart';
 import 'officer_dashboard.dart';
 import 'user_dashboard.dart';
 
-
-// 1. We change this to a StatefulWidget
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
 
@@ -13,10 +14,76 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> {
+  // 1. Service & Controllers
+  final AuthService _authService = AuthService();
+  final TextEditingController _emailController = TextEditingController(); // Renamed for clarity
+  final TextEditingController _passwordController = TextEditingController(); // Added password controller
+  
   bool _isObscured = true;
-  // Add these controllers to capture text
-  final TextEditingController _userController = TextEditingController();
+  bool _isLoading = false; // To show spinner
 
+  // 2. The Login Logic
+  // 2. The Login Logic
+  void _handleLogin() async {
+    if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please fill all fields"))
+      );
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    // A. Sign In with Firebase Auth
+    String? error = await _authService.signIn(
+      _emailController.text.trim(),
+      _passwordController.text.trim(),
+    );
+
+    if (error != null) {
+      setState(() => _isLoading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+      }
+    } else {
+      // B. Login Success -> Fetch Role and Setup Status from Firestore
+      try {
+        String uid = FirebaseAuth.instance.currentUser!.uid;
+        DocumentSnapshot userDoc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
+        
+        setState(() => _isLoading = false);
+
+        if (userDoc.exists) {
+          // C. READ THE NEW SETUP STATUS
+          bool finishedSetup = false;
+          try {
+            finishedSetup = userDoc.get('hasCompletedSetup') ?? false;
+          } catch (e) {
+            finishedSetup = false; // Handle case where field doesn't exist yet
+          }
+          
+          String role = userDoc.get('role'); // 'farmer' or 'officer'
+
+          // D. NAVIGATE BASED ON ROLE AND SETUP STATUS
+          if (role == 'officer' || role == 'admin') {
+            Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const OfficerDashboard()));
+          } else {
+            // Both "Skipped" and "Completed" users go to the Dashboard.
+            // The Dashboard's "Connect" button handles the redirection to Setup if needed.
+            Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const UserDashboard()));
+          }
+        } else {
+          // Fallback for unexpected missing documents
+          Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const UserDashboard()));
+        }
+      } catch (e) {
+        setState(() => _isLoading = false);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error fetching user data: $e")));
+        }
+      }
+    }
+  }
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -28,7 +95,18 @@ class _LoginPageState extends State<LoginPage> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Icon(Icons.webhook, size: 80, color: Colors.green),
+                Transform.translate(
+                  offset: const Offset(0, 20),
+                  child:
+                    Image.asset(
+                      'assets/logo.png', // The path to your actual logo
+                      height: 170,       // Adjust size as needed
+                      width: 170,
+                      errorBuilder: (context, error, stackTrace) => 
+                          const Icon(Icons.webhook, size: 80, color: Colors.green), // Fallback if image fails
+                    ),
+                ),
+                const SizedBox(height: 5),
                 const Text(
                   'Sign In',
                   style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: Colors.green),
@@ -43,12 +121,15 @@ class _LoginPageState extends State<LoginPage> {
                   ),
                   child: Column(
                     children: [
+                      // Email Field
                       TextField(
-                        controller: _userController, // Assign controller
-                        decoration: const InputDecoration(hintText: 'username'),
+                        controller: _emailController, // Connected controller
+                        decoration: const InputDecoration(hintText: 'email'), // Firebase needs email, not username
                       ),
                       const SizedBox(height: 15),
+                      // Password Field
                       TextField(
+                        controller: _passwordController, // Connected controller
                         obscureText: _isObscured,
                         decoration: InputDecoration(
                           hintText: 'password',
@@ -59,33 +140,22 @@ class _LoginPageState extends State<LoginPage> {
                         ),
                       ),
                       const SizedBox(height: 25),
+                      
+                      // Login Button
                       SizedBox(
                         width: double.infinity,
                         child: ElevatedButton(
-                          onPressed: () {
-                            // ROLE BASED NAVIGATION LOGIC
-                            String userText = _userController.text.toLowerCase();
-                            
-                            if (userText.contains('officer') || userText.contains('admin')) {
-                              Navigator.pushReplacement(
-                                context,
-                                MaterialPageRoute(builder: (context) => const OfficerDashboard()),
-                              );
-                            } else {
-                              Navigator.pushReplacement(
-                                context,
-                                MaterialPageRoute(builder: (context) => const UserDashboard()),
-                              );
-                            }
-                          },
+                          onPressed: _isLoading ? null : _handleLogin, // Disable if loading
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.green[700],
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
                           ),
-                          child: const Text('login', style: TextStyle(color: Colors.white)),
+                          child: _isLoading 
+                            ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                            : const Text('login', style: TextStyle(color: Colors.white)),
                         ),
                       ),
-                      // ... rest of your TextButton code
+                      
                       TextButton(
                         onPressed: () {},
                         child: const Text('forgot password?', style: TextStyle(color: Colors.grey)),

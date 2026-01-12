@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import '../services/auth_service.dart';
+import 'user_dashboard.dart';
+import 'officer_dashboard.dart';
+import 'device_setup_screen.dart'; // Import the new setup screen
 
 class SignUpPage extends StatefulWidget {
   const SignUpPage({super.key});
@@ -8,9 +12,76 @@ class SignUpPage extends StatefulWidget {
 }
 
 class _SignUpPageState extends State<SignUpPage> {
-  // 1. Define the list of roles and a variable to store the selection
+  final AuthService _authService = AuthService();
+  
+  final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _phoneController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
+  final TextEditingController _confirmPassController = TextEditingController();
+
   final List<String> _roles = ['Regular User', 'Agricultural/Health Officer'];
-  String? _selectedRole; // This starts as null so the hint shows up
+  String? _selectedRole;
+  bool _isLoading = false;
+
+  // --- UPDATED LOGIC ---
+  void _handleSignUp() async {
+    if (_nameController.text.isEmpty || 
+        _emailController.text.isEmpty || 
+        _passwordController.text.isEmpty ||
+        _selectedRole == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please fill all fields")));
+      return;
+    }
+
+    if (_passwordController.text != _confirmPassController.text) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Passwords do not match")));
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    String dbRole = (_selectedRole == 'Agricultural/Health Officer') ? 'officer' : 'farmer';
+
+    // 1. Create account (Ensure your AuthService sets hasCompletedSetup: false by default)
+    String? error = await _authService.signUp(
+      _emailController.text.trim(),
+      _passwordController.text.trim(),
+      _nameController.text.trim(),
+      dbRole 
+    );
+
+    if (!mounted) return;
+
+    if (error == null) {
+      if (dbRole == 'officer') {
+        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const OfficerDashboard()));
+      } else {
+        // 2. CHECK FOR DEVICE IMMEDIATELY
+        bool isHardwareNearby = await _checkForNearbyDevice(); 
+
+        setState(() => _isLoading = false);
+
+        if (isHardwareNearby) {
+          // If device found, go to Setup Screen (Setup screen will have the SKIP button)
+          Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const DeviceSetupScreen()));
+        } else {
+          // If no device nearby, go straight to Dashboard
+          Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const UserDashboard()));
+        }
+      }
+    } else {
+      setState(() => _isLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+    }
+  }
+
+  // Simulated Bluetooth/WiFi scan
+  Future<bool> _checkForNearbyDevice() async {
+    await Future.delayed(const Duration(seconds: 2));
+    return true; // Simulate finding a WingTrace module
+  }
+  // --- END LOGIC ---
 
   @override
   Widget build(BuildContext context) {
@@ -22,13 +93,22 @@ class _SignUpPageState extends State<SignUpPage> {
             padding: const EdgeInsets.symmetric(horizontal: 30),
             child: Column(
               children: [
-                const Icon(Icons.webhook, size: 80, color: Colors.green),
+                Transform.translate(
+                  offset: const Offset(0, 20),
+                  child: Image.asset(
+                    'assets/logo.png',
+                    height: 170,
+                    width: 170,
+                    errorBuilder: (context, error, stackTrace) => 
+                        const Icon(Icons.webhook, size: 80, color: Colors.green),
+                  ),
+                ),
+                const SizedBox(height: 5),
                 const Text(
                   'Sign Up',
                   style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: Colors.green),
                 ),
                 const SizedBox(height: 20),
-                
                 Container(
                   padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
@@ -38,53 +118,34 @@ class _SignUpPageState extends State<SignUpPage> {
                   ),
                   child: Column(
                     children: [
-                      const TextField(decoration: InputDecoration(hintText: 'Full Name')),
-                      const TextField(decoration: InputDecoration(hintText: 'Email/username')),
-                      const TextField(decoration: InputDecoration(hintText: 'Mobile No.')),
-                      
-                      // 2. The Role Dropdown Widget
+                      TextField(controller: _nameController, decoration: const InputDecoration(hintText: 'Full Name')),
+                      TextField(controller: _emailController, decoration: const InputDecoration(hintText: 'Email/username')),
+                      TextField(controller: _phoneController, decoration: const InputDecoration(hintText: 'Mobile No.')),
                       DropdownButtonFormField<String>(
                         value: _selectedRole,
                         hint: const Text('Select Role'),
-                        decoration: const InputDecoration(
-                          enabledBorder: UnderlineInputBorder(
-                            borderSide: BorderSide(color: Colors.grey),
-                          ),
-                        ),
-                        items: _roles.map((String role) {
-                          return DropdownMenuItem<String>(
-                            value: role,
-                            child: Text(role),
-                          );
-                        }).toList(),
-                        onChanged: (String? newValue) {
-                          setState(() {
-                            _selectedRole = newValue;
-                          });
-                        },
+                        items: _roles.map((r) => DropdownMenuItem(value: r, child: Text(r))).toList(),
+                        onChanged: (val) => setState(() => _selectedRole = val),
                       ),
-
-                      const TextField(obscureText: true, decoration: InputDecoration(hintText: 'Password')),
-                      const TextField(obscureText: true, decoration: InputDecoration(hintText: 'Confirm Password')),
+                      TextField(controller: _passwordController, obscureText: true, decoration: const InputDecoration(hintText: 'Password')),
+                      TextField(controller: _confirmPassController, obscureText: true, decoration: const InputDecoration(hintText: 'Confirm Password')),
                       const SizedBox(height: 25),
-                      
                       SizedBox(
                         width: double.infinity,
                         child: ElevatedButton(
-                          onPressed: () {
-                            print("Selected Role: $_selectedRole");
-                          },
+                          onPressed: _isLoading ? null : _handleSignUp,
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.green[700],
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
                           ),
-                          child: const Text('Register', style: TextStyle(color: Colors.white)),
+                          child: _isLoading 
+                            ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                            : const Text('Register', style: TextStyle(color: Colors.white)),
                         ),
                       ),
                     ],
                   ),
                 ),
-                
                 const SizedBox(height: 20),
                 TextButton(
                   onPressed: () => Navigator.pop(context),

@@ -28,18 +28,27 @@ environment:
 # the latest version available on pub.dev. To see which dependencies have newer
 # versions available, run `flutter pub outdated`.
 dependencies:
+  url_launcher: ^6.3.0
   flutter:
     sdk: flutter
-
+  google_generative_ai: ^0.4.0
+  animated_text_kit: ^4.2.2
+  http: ^1.2.0
+  network_info_plus: ^6.0.0 # To check which WiFi SSID you are currently on
+  connectivity_plus: ^6.0.0 # To detect when WiFi connects/disconnects
+  permission_handler: ^11.0.0 # WiFi name requires Location permission
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
   image_picker: ^1.2.1
+  firebase_core: ^3.0.0
+  firebase_auth: ^5.0.0
+  cloud_firestore: ^5.0.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-
+  flutter_launcher_icons: ^0.13.1
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
   # activated in the `analysis_options.yaml` file located at the root of your
@@ -57,6 +66,11 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+  assets:
+  - assets/mosquito.png
+  - assets/device_image.png
+  - assets/logo.png
+  - assets/profile_pics/
 
   # To add assets to your application, add an assets section, like this:
   # assets:
@@ -88,5 +102,11 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
-assets:
-  - assets/mosquito.png
+flutter_launcher_icons:
+  android: "launcher_icon"
+  ios: true
+  image_path: "assets/logo.png" # Path to your logo
+  min_sdk_android: 21
+  # Optional: For Android 8.0+ adaptive icons
+  adaptive_icon_background: "#FDFBE7" # Match your app's background color
+  adaptive_icon_foreground: "assets/logo.png"
