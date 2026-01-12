@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
-import 'user_dashboard.dart'; // Ensure this matches your file name
+import 'user_dashboard.dart';
 import 'officer_dashboard.dart';
+import 'device_setup_screen.dart'; // Import the new setup screen
 
 class SignUpPage extends StatefulWidget {
   const SignUpPage({super.key});
@@ -11,10 +12,8 @@ class SignUpPage extends StatefulWidget {
 }
 
 class _SignUpPageState extends State<SignUpPage> {
-  // --- LOGIC START ---
   final AuthService _authService = AuthService();
   
-  // 1. Controllers to capture text input
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _phoneController = TextEditingController();
@@ -25,8 +24,8 @@ class _SignUpPageState extends State<SignUpPage> {
   String? _selectedRole;
   bool _isLoading = false;
 
+  // --- UPDATED LOGIC ---
   void _handleSignUp() async {
-    // Basic Validation
     if (_nameController.text.isEmpty || 
         _emailController.text.isEmpty || 
         _passwordController.text.isEmpty ||
@@ -42,10 +41,9 @@ class _SignUpPageState extends State<SignUpPage> {
 
     setState(() => _isLoading = true);
 
-    // Map UI Role to Database Role
     String dbRole = (_selectedRole == 'Agricultural/Health Officer') ? 'officer' : 'farmer';
 
-    // Call Firebase
+    // 1. Create account (Ensure your AuthService sets hasCompletedSetup: false by default)
     String? error = await _authService.signUp(
       _emailController.text.trim(),
       _passwordController.text.trim(),
@@ -54,20 +52,36 @@ class _SignUpPageState extends State<SignUpPage> {
     );
 
     if (!mounted) return;
-    setState(() => _isLoading = false);
 
     if (error == null) {
-      // Success: Route to correct Dashboard
       if (dbRole == 'officer') {
         Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const OfficerDashboard()));
       } else {
-        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const UserDashboard()));
+        // 2. CHECK FOR DEVICE IMMEDIATELY
+        bool isHardwareNearby = await _checkForNearbyDevice(); 
+
+        setState(() => _isLoading = false);
+
+        if (isHardwareNearby) {
+          // If device found, go to Setup Screen (Setup screen will have the SKIP button)
+          Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const DeviceSetupScreen()));
+        } else {
+          // If no device nearby, go straight to Dashboard
+          Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const UserDashboard()));
+        }
       }
     } else {
+      setState(() => _isLoading = false);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
     }
   }
-  // --- LOGIC END ---
+
+  // Simulated Bluetooth/WiFi scan
+  Future<bool> _checkForNearbyDevice() async {
+    await Future.delayed(const Duration(seconds: 2));
+    return true; // Simulate finding a WingTrace module
+  }
+  // --- END LOGIC ---
 
   @override
   Widget build(BuildContext context) {
@@ -79,13 +93,22 @@ class _SignUpPageState extends State<SignUpPage> {
             padding: const EdgeInsets.symmetric(horizontal: 30),
             child: Column(
               children: [
-                const Icon(Icons.webhook, size: 80, color: Colors.green),
+                Transform.translate(
+                  offset: const Offset(0, 20),
+                  child: Image.asset(
+                    'assets/logo.png',
+                    height: 170,
+                    width: 170,
+                    errorBuilder: (context, error, stackTrace) => 
+                        const Icon(Icons.webhook, size: 80, color: Colors.green),
+                  ),
+                ),
+                const SizedBox(height: 5),
                 const Text(
                   'Sign Up',
                   style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: Colors.green),
                 ),
                 const SizedBox(height: 20),
-                
                 Container(
                   padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
@@ -95,61 +118,26 @@ class _SignUpPageState extends State<SignUpPage> {
                   ),
                   child: Column(
                     children: [
-                      TextField(
-                        controller: _nameController, // Added Controller
-                        decoration: const InputDecoration(hintText: 'Full Name'),
-                      ),
-                      TextField(
-                        controller: _emailController, // Added Controller
-                        decoration: const InputDecoration(hintText: 'Email/username'),
-                      ),
-                      TextField(
-                        controller: _phoneController, // Added Controller
-                        decoration: const InputDecoration(hintText: 'Mobile No.'),
-                      ),
-                      
+                      TextField(controller: _nameController, decoration: const InputDecoration(hintText: 'Full Name')),
+                      TextField(controller: _emailController, decoration: const InputDecoration(hintText: 'Email/username')),
+                      TextField(controller: _phoneController, decoration: const InputDecoration(hintText: 'Mobile No.')),
                       DropdownButtonFormField<String>(
                         value: _selectedRole,
                         hint: const Text('Select Role'),
-                        decoration: const InputDecoration(
-                          enabledBorder: UnderlineInputBorder(
-                            borderSide: BorderSide(color: Colors.grey),
-                          ),
-                        ),
-                        items: _roles.map((String role) {
-                          return DropdownMenuItem<String>(
-                            value: role,
-                            child: Text(role),
-                          );
-                        }).toList(),
-                        onChanged: (String? newValue) {
-                          setState(() {
-                            _selectedRole = newValue;
-                          });
-                        },
+                        items: _roles.map((r) => DropdownMenuItem(value: r, child: Text(r))).toList(),
+                        onChanged: (val) => setState(() => _selectedRole = val),
                       ),
-
-                      TextField(
-                        controller: _passwordController, // Added Controller
-                        obscureText: true, 
-                        decoration: const InputDecoration(hintText: 'Password')
-                      ),
-                      TextField(
-                        controller: _confirmPassController, // Added Controller
-                        obscureText: true, 
-                        decoration: const InputDecoration(hintText: 'Confirm Password')
-                      ),
+                      TextField(controller: _passwordController, obscureText: true, decoration: const InputDecoration(hintText: 'Password')),
+                      TextField(controller: _confirmPassController, obscureText: true, decoration: const InputDecoration(hintText: 'Confirm Password')),
                       const SizedBox(height: 25),
-                      
                       SizedBox(
                         width: double.infinity,
                         child: ElevatedButton(
-                          onPressed: _isLoading ? null : _handleSignUp, // Connected Logic
+                          onPressed: _isLoading ? null : _handleSignUp,
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.green[700],
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
                           ),
-                          // Added Loading Indicator support
                           child: _isLoading 
                             ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
                             : const Text('Register', style: TextStyle(color: Colors.white)),
@@ -158,7 +146,6 @@ class _SignUpPageState extends State<SignUpPage> {
                     ],
                   ),
                 ),
-                
                 const SizedBox(height: 20),
                 TextButton(
                   onPressed: () => Navigator.pop(context),

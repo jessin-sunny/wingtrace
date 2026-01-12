@@ -1,4 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart'; 
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:async';
+import 'package:animated_text_kit/animated_text_kit.dart'; 
+
 import 'detection_screen.dart'; 
 import 'history_screen.dart';
 import 'analytics_screen.dart';
@@ -7,6 +12,8 @@ import 'profile_screen.dart';
 import 'accuracy_summary_screen.dart';
 import 'detection_count_screen.dart';
 import 'last_detected_screen.dart';
+import 'pest_chatbot_screen.dart';
+import 'device_setup_screen.dart';
 
 class UserDashboard extends StatefulWidget {
   const UserDashboard({super.key});
@@ -16,276 +23,339 @@ class UserDashboard extends StatefulWidget {
 }
 
 class _UserDashboardState extends State<UserDashboard> {
-  // 1. Connection Status State
-  bool _isConnected = false;
+  // _isLive tracks if the Bluetooth/Session is currently active
+  bool _isLive = false; 
+  final String _deviceName = "WingTrace v1";
+  final User? _user = FirebaseAuth.instance.currentUser;
+  Timer? _factTimer;
 
-  // 2. "Do You Know?" Logic - Randomized Facts
   final List<String> _pestFacts = [
     "Only female mosquitoes bite; they need blood protein for their eggs.",
     "Mosquitoes can detect CO2 from your breath from 75 feet away.",
     "A full moon can increase mosquito activity by up to 500%!",
     "Mosquitoes are the world's deadliest animals, causing 1 million deaths yearly.",
-    "Mosquitoes can breed in as little as a teaspoon of stagnant water."
+    "Mosquitoes can breed in as little as a teaspoon of stagnant water.",
+    "Dragonflies are natural predators; one can eat hundreds of mosquitoes a day."
   ];
   late String _currentFact;
 
   @override
   void initState() {
     super.initState();
-    // Selects a random fact when the screen is first loaded
     _currentFact = (_pestFacts..shuffle()).first;
+
+    _factTimer = Timer.periodic(const Duration(seconds: 20), (timer) {
+      if (mounted) {
+        setState(() { _currentFact = (_pestFacts..shuffle()).first; });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _factTimer?.cancel();
+    super.dispose();
+  }
+
+  // --- LOGIC ---
+
+  void _handleConnectTap(bool hasSetup) {
+    if (!hasSetup) {
+      // If user removed device in settings, this will now trigger correctly
+      Navigator.push(context, MaterialPageRoute(builder: (_) => const DeviceSetupScreen()));
+    } else {
+      _showConnectionDialog();
+    }
+  }
+
+  void _showConnectionDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return FutureBuilder(
+          future: Future.delayed(const Duration(seconds: 3)), 
+          builder: (context, snapshot) {
+            bool isFound = snapshot.connectionState == ConnectionState.done;
+            return Dialog(
+              backgroundColor: Colors.green.withOpacity(0.9),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (!isFound) ...[
+                      const CircularProgressIndicator(color: Colors.white),
+                      const SizedBox(height: 20),
+                      const Text("Searching for device...", style: TextStyle(color: Colors.white)),
+                    ] else ...[
+                      // const Icon(Icons.bluetooth_connected, size: 60, color: Colors.white),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(10),
+                        child: Image.asset(
+                          'assets/device_image.png',
+                          width: 150, height: 150, fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) => const Icon(Icons.developer_board, size: 50, color: Colors.grey),
+                        ),
+                      ),
+                      const SizedBox(height: 15),
+                      Text("$_deviceName Ready", style: const TextStyle(color: Colors.white, fontSize: 18)),
+                      const SizedBox(height: 20),
+                      ElevatedButton(
+                        onPressed: () {
+                          setState(() => _isLive = true);
+                          Navigator.pop(context);
+                        },
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.white, foregroundColor: Colors.green),
+                        child: const Text("GO LIVE"),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _protectedNavigation(Widget screen) {
+    if (_isLive) {
+      Navigator.push(context, MaterialPageRoute(builder: (context) => screen));
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please connect your WingTrace device first."), backgroundColor: Colors.redAccent)
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFFDFBE7),
-      body: SingleChildScrollView(
-        child: Column(
-          children: [
-            // Curved Green Header
-            Stack(
+      // THE FIX: StreamBuilder listens to Firestore changes in real-time
+      body: StreamBuilder<DocumentSnapshot>(
+        stream: FirebaseFirestore.instance.collection('users').doc(_user?.uid).snapshots(),
+        builder: (context, snapshot) {
+          bool hasSetup = false;
+          String name = "Guest User";
+
+          if (snapshot.hasData && snapshot.data!.exists) {
+            final data = snapshot.data!.data() as Map<String, dynamic>;
+            hasSetup = data['hasCompletedSetup'] ?? false;
+            name = data['name'] ?? "WingTrace User";
+
+            // AUTO-DISCONNECT: If DB says setup is gone, kill the 'Live' status immediately
+            if (!hasSetup && _isLive) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                setState(() => _isLive = false);
+              });
+            }
+          }
+
+          return SingleChildScrollView(
+            child: Column(
               children: [
-                Container(
-                  height: 200,
-                  decoration: const BoxDecoration(
-                    color: Colors.green,
-                    borderRadius: BorderRadius.only(
-                      bottomLeft: Radius.circular(100),
-                      bottomRight: Radius.circular(100),
-                    ),
-                  ),
-                ),
-                Positioned(
-                  top: 60,
-                  left: 0,
-                  right: 0,
+                _buildHeader(name),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
                   child: Column(
                     children: [
-                      const CircleAvatar(
-                        radius: 40,
-                        backgroundColor: Colors.white,
-                        child: Icon(Icons.person, size: 50, color: Colors.grey),
+                      // Dynamic Button (Setup Device OR Connect OR Live)
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: Padding(
+                          padding: const EdgeInsets.only(top: 10),
+                          child: ElevatedButton(
+                            onPressed: () => _handleConnectTap(hasSetup),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: _isLive ? Colors.transparent : Colors.red,
+                              elevation: _isLive ? 0 : 2,
+                              shape: const StadiumBorder(),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  _isLive ? 'LIVE' : (hasSetup ? 'connect' : 'setup device'),
+                                  style: TextStyle(color: _isLive ? Colors.red : Colors.white, fontWeight: FontWeight.bold),
+                                ),
+                                if (_isLive) ...[const SizedBox(width: 5), const Icon(Icons.fiber_manual_record, color: Colors.red, size: 12)],
+                              ],
+                            ),
+                          ),
+                        ),
                       ),
+                      
+                      _buildSummarySection(),
+
+                      if (_isLive) _buildEnvStats(),
+
                       const SizedBox(height: 10),
-                      const Text(
-                        'username',
-                        style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
-                      ),
+                      _buildActionButtons(),
+                      const SizedBox(height: 30),
+                      _buildDoYouKnowSection(),
+                      const SizedBox(height: 100), 
                     ],
                   ),
                 ),
               ],
             ),
-
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Column(
-                children: [
-                  // DYNAMIC CONNECT/LIVE BUTTON
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: Padding(
-                      padding: const EdgeInsets.only(top: 10),
-                      child: ElevatedButton(
-                        onPressed: () {
-                          setState(() {
-                            _isConnected = !_isConnected;
-                          });
-                          if (_isConnected) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text("Hardware Connected Successfully!")),
-                            );
-                          }
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: _isConnected ? Colors.red : Colors.grey[700],
-                          shape: const StadiumBorder(),
-                          padding: const EdgeInsets.symmetric(horizontal: 20),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              _isConnected ? 'LIVE' : 'connect',
-                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                            ),
-                            if (_isConnected) ...[
-                              const SizedBox(width: 5),
-                              const Icon(Icons.fiber_manual_record, color: Colors.white, size: 12),
-                            ]
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-
-                  // Quick Summary Card
-                  Container(
-                    margin: const EdgeInsets.symmetric(vertical: 20),
-                    padding: const EdgeInsets.all(15),
-                    decoration: BoxDecoration(
-                      color: Colors.transparent,
-                      borderRadius: BorderRadius.circular(30),
-                      border: Border.all(color: Colors.green, width: 1),
-                    ),
-                    child: Column(
-                      children: [
-                        const Text(
-                          'QUICK SUMMARY',
-                          style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 18),
-                        ),
-                        const SizedBox(height: 15),
-                        // Inside the Quick Summary Container
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceAround,
-                          children: [
-                            GestureDetector(
-                              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const AccuracySummaryScreen())),
-                              child: _summaryItem(Icons.list_alt, 'accuracy\nsummary'),
-                            ),
-                            GestureDetector(
-                              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const DetectionCountScreen())),
-                              child: _summaryItem(Icons.touch_app, 'detection\ncount today'),
-                            ),
-                            GestureDetector(
-                              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const LastDetectedScreen())),
-                              child: _summaryItem(Icons.access_time, 'last\ndetected\npest'),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  // Square Action Buttons with Navigation
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
-                    children: [
-                      GestureDetector(
-                        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const DetectionScreen())),
-                        child: _actionButton('Start\nDetection', Icons.biotech),
-                      ),
-                      GestureDetector(
-                        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const HistoryScreen())),
-                        child: _actionButton('View\nHistory', Icons.history_edu),
-                      ),
-                      GestureDetector(
-                        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const AnalyticsScreen())),
-                        child: _actionButton('Analytics', Icons.insights),
-                      ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 20),
-
-                  // DO YOU KNOW? SECTION (Dynamic)
-                  Container(
-                    padding: const EdgeInsets.all(15),
-                    decoration: BoxDecoration(
-                      color: Colors.transparent,
-                      borderRadius: BorderRadius.circular(30),
-                      border: Border.all(color: Colors.green, width: 1),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Center(
-                          child: Text(
-                            'Do You Know?',
-                            style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 18),
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        Row(
-                          children: [
-                            ClipOval(
-                              child: Image.asset('assets/mosquito.png', width: 80, height: 80,fit: BoxFit.cover,
-                                errorBuilder: (context, error, stackTrace) => const Icon(Icons.bug_report, size: 40, color: Colors.green),
-                              ),
-                            ),
-                            const SizedBox(width: 15),
-                            Expanded(
-                              child: Text(
-                                _currentFact, // DYNAMIC FACT
-                                style: const TextStyle(color: Colors.green, fontSize: 13),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 100), 
-                ],
-              ),
-            ),
-          ],
-        ),
+          );
+        },
       ),
-      // Custom Navigation Bar
-      bottomNavigationBar: Container(
-        height: 70,
-        decoration: const BoxDecoration(
-          color: Colors.green,
-          borderRadius: BorderRadius.only(
-            topLeft: Radius.circular(30),
-            topRight: Radius.circular(30),
+      bottomNavigationBar: _buildBottomNav(),
+    );
+  }
+
+  // --- SUB-WIDGETS FOR CLEANER CODE ---
+
+  Widget _buildHeader(String name) {
+    return Stack(
+      children: [
+        Container(
+          height: 200,
+          decoration: const BoxDecoration(
+            color: Colors.green,
+            borderRadius: BorderRadius.only(bottomLeft: Radius.circular(100), bottomRight: Radius.circular(100)),
           ),
         ),
+        Positioned(
+          top: 60, left: 0, right: 0,
+          child: Column(
+            children: [
+              const CircleAvatar(radius: 40, backgroundColor: Colors.white, child: Icon(Icons.person, size: 50, color: Colors.grey)),
+              const SizedBox(height: 10),
+              Text(name, style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSummarySection() {
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 20),
+      padding: const EdgeInsets.all(15),
+      decoration: BoxDecoration(borderRadius: BorderRadius.circular(30), border: Border.all(color: Colors.green, width: 1)),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: [
+          _summaryItem(Icons.list_alt, 'accuracy\nsummary', const AccuracySummaryScreen()),
+          _summaryItem(Icons.touch_app, 'detection\ncount', const DetectionCountScreen()),
+          _summaryItem(Icons.access_time, 'last\ndetected', const LastDetectedScreen()),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEnvStats() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 15),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
+          _envStatItem(Icons.thermostat, "28°C", "Temperature"),
+          Container(height: 30, width: 1, color: Colors.green.withOpacity(0.3)),
+          _envStatItem(Icons.water_drop, "65%", "Humidity"),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildActionButtons() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceAround,
+      children: [
+        _actionButton('Start\nDetection', Icons.biotech, const DetectionScreen()),
+        _actionButton('View\nHistory', Icons.history_edu, const HistoryScreen()),
+        _actionButton('Analytics', Icons.insights, const AnalyticsScreen()),
+      ],
+    );
+  }
+
+  Widget _buildDoYouKnowSection() {
+    return Container(
+      padding: const EdgeInsets.all(15),
+      decoration: BoxDecoration(borderRadius: BorderRadius.circular(30), border: Border.all(color: Colors.green, width: 1)),
+      child: Column(
+        children: [
+          const Center(child: Text('Do You Know?', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 18))),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              ClipOval(child: Image.asset('assets/mosquito.png', width: 80, height: 80, fit: BoxFit.cover, errorBuilder: (context, error, stackTrace) => const Icon(Icons.bug_report, size: 40, color: Colors.green))),
+              const SizedBox(width: 15),
+              Expanded(
+                child: SizedBox(
+                  height: 60, 
+                  child: AnimatedTextKit(
+                    key: ValueKey(_currentFact), 
+                    animatedTexts: [
+                      TypewriterAnimatedText(_currentFact, textStyle: const TextStyle(color: Colors.green, fontSize: 13), speed: const Duration(milliseconds: 50)),
+                    ],
+                    totalRepeatCount: 1,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBottomNav() {
+    return SafeArea(
+      child: Container(
+        height: 70,
+        margin: const EdgeInsets.fromLTRB(15, 0, 15, 10), 
+        decoration: BoxDecoration(color: Colors.green, borderRadius: BorderRadius.circular(30)),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceAround,
           children: [
-            // Home Icon (Current Dashboard)
-            IconButton(
-              icon: const Icon(Icons.home, color: Colors.white, size: 30),
-              onPressed: () { /* Already here */ },
-            ),
-            // Settings Icon
-            IconButton(
-              icon: const Icon(Icons.settings, color: Colors.white, size: 30),
-              onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const SettingsScreen())),
-            ),
-            // History (Time) Icon
-            IconButton(
-              icon: const Icon(Icons.history, color: Colors.white, size: 30),
-              onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const HistoryScreen())),
-            ),
-            // Profile Icon
-            IconButton(
-              icon: const Icon(Icons.person, color: Colors.white, size: 30),
-              onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const ProfileScreen())),
-            ),
+            IconButton(icon: const Icon(Icons.home, color: Colors.white, size: 30), onPressed: () {}),
+            IconButton(icon: const Icon(Icons.settings, color: Colors.white, size: 30), onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => SettingsScreen(isConnected: _isLive, deviceName: _deviceName)))),
+            IconButton(icon: const Icon(Icons.person, color: Colors.white, size: 30), onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const ProfileScreen()))),
+            IconButton(icon: const Icon(Icons.smart_toy_outlined, color: Colors.white, size: 30), onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const PestChatbotScreen()))),
           ],
         ),
       ),
     );
   }
 
-  Widget _summaryItem(IconData icon, String label) {
-    return Column(
+  // Helpers
+  Widget _envStatItem(IconData icon, String value, String label) {
+    return Row(
       children: [
-        Icon(icon, color: Colors.grey[700], size: 35),
-        const SizedBox(height: 5),
-        Text(label, textAlign: TextAlign.center, style: const TextStyle(fontSize: 10, color: Colors.green)),
+        Icon(icon, color: Colors.green, size: 32),
+        const SizedBox(width: 8),
+        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(value, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+          Text(label, style: const TextStyle(color: Colors.green, fontSize: 12)),
+        ]),
       ],
     );
   }
 
-  Widget _actionButton(String label, IconData icon) {
-    return Column(
-      children: [
-        Container(
-          width: 70, height: 70,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(15),
-            border: Border.all(color: Colors.green, width: 2),
-          ),
-          child: Icon(icon, color: Colors.green, size: 35),
-        ),
+  Widget _summaryItem(IconData icon, String label, Widget screen) {
+    return GestureDetector(
+      onTap: () => _protectedNavigation(screen),
+      child: Column(children: [Icon(icon, color: Colors.grey[700], size: 35), Text(label, textAlign: TextAlign.center, style: const TextStyle(fontSize: 10, color: Colors.green))]),
+    );
+  }
+
+  Widget _actionButton(String label, IconData icon, Widget screen) {
+    return GestureDetector(
+      onTap: () => _protectedNavigation(screen),
+      child: Column(children: [
+        Container(width: 70, height: 70, decoration: BoxDecoration(borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.green, width: 2)), child: Icon(icon, color: Colors.green, size: 35)),
         const SizedBox(height: 5),
         Text(label, textAlign: TextAlign.center, style: const TextStyle(color: Colors.green, fontSize: 12)),
-      ],
+      ]),
     );
   }
 }
