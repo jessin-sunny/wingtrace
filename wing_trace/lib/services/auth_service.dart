@@ -23,6 +23,7 @@ class AuthService {
         'role': role, // <--- This saves 'farmer' or 'officer'
         'created_at': FieldValue.serverTimestamp(),
         'owned_devices': [],
+        'hasCompletedSetup': false
       });
 
       return null; // Success

@@ -23,9 +23,12 @@ class _LoginPageState extends State<LoginPage> {
   bool _isLoading = false; // To show spinner
 
   // 2. The Login Logic
+  // 2. The Login Logic
   void _handleLogin() async {
     if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please fill all fields")));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please fill all fields"))
+      );
       return;
     }
 
@@ -38,11 +41,12 @@ class _LoginPageState extends State<LoginPage> {
     );
 
     if (error != null) {
-      // Login Failed
       setState(() => _isLoading = false);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+      }
     } else {
-      // B. Login Success -> Fetch Role from Firestore
+      // B. Login Success -> Fetch Role and Setup Status from Firestore
       try {
         String uid = FirebaseAuth.instance.currentUser!.uid;
         DocumentSnapshot userDoc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
@@ -50,25 +54,36 @@ class _LoginPageState extends State<LoginPage> {
         setState(() => _isLoading = false);
 
         if (userDoc.exists) {
-          String role = userDoc.get('role'); // 'farmer', 'officer', etc.
+          // C. READ THE NEW SETUP STATUS
+          bool finishedSetup = false;
+          try {
+            finishedSetup = userDoc.get('hasCompletedSetup') ?? false;
+          } catch (e) {
+            finishedSetup = false; // Handle case where field doesn't exist yet
+          }
           
-          // C. Navigate based on Database Role
+          String role = userDoc.get('role'); // 'farmer' or 'officer'
+
+          // D. NAVIGATE BASED ON ROLE AND SETUP STATUS
           if (role == 'officer' || role == 'admin') {
             Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const OfficerDashboard()));
           } else {
+            // Both "Skipped" and "Completed" users go to the Dashboard.
+            // The Dashboard's "Connect" button handles the redirection to Setup if needed.
             Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const UserDashboard()));
           }
         } else {
-           // Fallback if doc missing
-           Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const UserDashboard()));
+          // Fallback for unexpected missing documents
+          Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const UserDashboard()));
         }
       } catch (e) {
         setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error fetching role: $e")));
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error fetching user data: $e")));
+        }
       }
     }
   }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(

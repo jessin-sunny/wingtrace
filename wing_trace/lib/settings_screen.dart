@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'report_bug_screen.dart';
+import 'device_setup_screen.dart'; // Ensure this is imported
 
 class SettingsScreen extends StatelessWidget {
   final bool isConnected;
@@ -11,10 +14,50 @@ class SettingsScreen extends StatelessWidget {
     required this.deviceName,
   });
 
+  // Logic to completely remove the hardware link
+  Future<void> _removeHardware(BuildContext context) async {
+    try {
+      String uid = FirebaseAuth.instance.currentUser!.uid;
+      
+      // Reset the setup flag in Firestore
+      await FirebaseFirestore.instance.collection('users').doc(uid).update({
+        'hasCompletedSetup': false,
+      });
+
+      if (context.mounted) {
+        Navigator.pop(context); // Close the dialog
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Hardware removed. You will need to setup again.")),
+        );
+        // Optional: Navigate back to Dashboard to refresh state
+        Navigator.pop(context); 
+      }
+    } catch (e) {
+      debugPrint("Error removing hardware: $e");
+    }
+  }
+
+  void _showRemoveConfirmation(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Remove Hardware?"),
+        content: const Text("This will completely disconnect the device. You will have to go through the setup process again to reconnect."),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text("CANCEL")),
+          TextButton(
+            onPressed: () => _removeHardware(context),
+            child: const Text("REMOVE", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFFDFBE7), // Matching your dashboard theme
+      backgroundColor: const Color(0xFFFDFBE7),
       appBar: AppBar(
         title: const Text("Settings"),
         centerTitle: true,
@@ -26,32 +69,43 @@ class SettingsScreen extends StatelessWidget {
         children: [
           // 1. HARDWARE INFO SECTION
           _sectionHeader(context, "Hardware Information"),
-          if (isConnected)
-            _buildHardwareCard(context)
+          
+          if (isConnected) 
+            Column(
+              children: [
+                _buildHardwareCard(context),
+                const SizedBox(height: 10),
+                // --- DISCONNECT BUTTON ---
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () => _showRemoveConfirmation(context),
+                    icon: const Icon(Icons.link_off, color: Colors.red),
+                    label: const Text("DISCONNECT & REMOVE DEVICE", style: TextStyle(color: Colors.red)),
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: Colors.red),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                    ),
+                  ),
+                ),
+              ],
+            )
           else
-            _buildEmptyState("No WingTrace device connected."),
+            _buildEmptyState(context, "No WingTrace device connected."),
 
           const SizedBox(height: 20),
 
           // 2. SOFTWARE & APP SECTION
           _sectionHeader(context, "Software & App"),
           _buildListTile(Icons.info_outline, "Software Version", "v1.0.4-stable"),
-          _buildListTile(Icons.update, "Check for Updates", "Up to date", onTap: () {
-             _showUpdateDialog(context);
-          }),
-          
-          // --- UPDATED PRIVACY POLICY TILE ---
-          _buildListTile(Icons.security, "Privacy Policy", "Data & Security", onTap: () {
-            _showPrivacyPolicy(context);
-          }),
+          _buildListTile(Icons.update, "Check for Updates", "Up to date", onTap: () => _showUpdateDialog(context)),
+          _buildListTile(Icons.security, "Privacy Policy", "Data & Security", onTap: () => _showPrivacyPolicy(context)),
 
           const SizedBox(height: 20),
 
           // 3. ABOUT US & SUPPORT
           _sectionHeader(context, "About WingTrace"),
-          _buildListTile(Icons.group, "About Us", "Learn about the project", onTap: () {
-            _showAboutUs(context);
-          }),
+          _buildListTile(Icons.group, "About Us", "Learn about the project", onTap: () => _showAboutUs(context)),
           _buildListTile(Icons.help_center_outlined, "Help & Documentation", "Setup guide"),
           _buildListTile(Icons.bug_report, "Report a Bug", "Help us improve", onTap: () {
             Navigator.push(context, MaterialPageRoute(builder: (context) => const ReportBugScreen()));
@@ -78,12 +132,7 @@ class SettingsScreen extends StatelessWidget {
       padding: const EdgeInsets.only(left: 10, bottom: 8),
       child: Text(
         title.toUpperCase(),
-        style: const TextStyle(
-          color: Colors.green,
-          fontWeight: FontWeight.bold,
-          fontSize: 13,
-          letterSpacing: 1.2,
-        ),
+        style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 13, letterSpacing: 1.2),
       ),
     );
   }
@@ -94,9 +143,7 @@ class SettingsScreen extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10),
-        ],
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10)],
       ),
       child: Column(
         children: [
@@ -106,11 +153,8 @@ class SettingsScreen extends StatelessWidget {
                 borderRadius: BorderRadius.circular(10),
                 child: Image.asset(
                   'assets/device_image.png',
-                  width: 80,
-                  height: 80,
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) =>
-                      const Icon(Icons.developer_board, size: 50, color: Colors.grey),
+                  width: 80, height: 80, fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) => const Icon(Icons.developer_board, size: 50, color: Colors.grey),
                 ),
               ),
               const SizedBox(width: 15),
@@ -173,7 +217,8 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildEmptyState(String msg) {
+  // --- UPDATED EMPTY STATE WITH CONNECT BUTTON ---
+  Widget _buildEmptyState(BuildContext context, String msg) {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -181,14 +226,24 @@ class SettingsScreen extends StatelessWidget {
         border: Border.all(color: Colors.grey.withOpacity(0.1)),
         borderRadius: BorderRadius.circular(15),
       ),
-      child: Center(
-        child: Text(msg, style: const TextStyle(color: Colors.grey)),
+      child: Column(
+        children: [
+          Text(msg, style: const TextStyle(color: Colors.grey)),
+          const SizedBox(height: 15),
+          ElevatedButton.icon(
+            onPressed: () {
+              Navigator.push(context, MaterialPageRoute(builder: (context) => const DeviceSetupScreen()));
+            },
+            icon: const Icon(Icons.add, color: Colors.white),
+            label: const Text("CONNECT NEW DEVICE", style: TextStyle(color: Colors.white)),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.green, shape: const StadiumBorder()),
+          ),
+        ],
       ),
     );
   }
 
-  // --- Dialog Functions ---
-
+  // ... (Keep existing _showPrivacyPolicy, _showUpdateDialog, _showAboutUs functions here)
   void _showPrivacyPolicy(BuildContext context) {
     showDialog(
       context: context,
