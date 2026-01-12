@@ -53,4 +53,3 @@ print("Max:", pcm_array.max())
 print("Mean:", pcm_array.mean())
 
 print("\nSaved recording.wav and recording.npy")
-
