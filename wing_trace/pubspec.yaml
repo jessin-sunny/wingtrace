@@ -34,7 +34,9 @@ dependencies:
   google_generative_ai: ^0.4.0
   animated_text_kit: ^4.2.2
   http: ^1.2.0
-
+  network_info_plus: ^6.0.0 # To check which WiFi SSID you are currently on
+  connectivity_plus: ^6.0.0 # To detect when WiFi connects/disconnects
+  permission_handler: ^11.0.0 # WiFi name requires Location permission
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
