@@ -85,6 +85,7 @@ def claim_device():
     App sends:
     {
         "deviceId": "WingTraceV1_001",
+        "deviceName": "WingTraceV1_001"
         "userId": "user_123"
     }
     """
