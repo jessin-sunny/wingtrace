@@ -330,30 +330,23 @@ class _UserDashboardState extends State<UserDashboard> {
           ],
         ),
       ),
-      bottomNavigationBar: Padding(
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.of(context).padding.bottom + 10, // Dynamic padding based on phone type
-          left: 20, 
-          right: 20
-        ),
+      bottomNavigationBar: SafeArea( // Add this wrapper
         child: Container(
-          height: 65,
-          decoration: BoxDecoration(
+          height: 70,
+          margin: const EdgeInsets.only(bottom: 10, left: 10, right: 10), // Optional: makes it look floating
+          decoration: const BoxDecoration(
             color: Colors.green,
-            borderRadius: BorderRadius.circular(35),
-            boxShadow: [
-              BoxShadow(color: Colors.black26, blurRadius: 10, offset: Offset(0, 5))
-            ],
+            borderRadius: BorderRadius.all(Radius.circular(30)), // Circular on all sides looks better if floating
           ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              IconButton(icon: const Icon(Icons.home, color: Colors.white, size: 30), onPressed: () {}),
-                  IconButton(icon: const Icon(Icons.settings, color: Colors.white, size: 30), onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => SettingsScreen(isConnected: _isConnected, deviceName: _deviceName)))),
-                  IconButton(icon: const Icon(Icons.history, color: Colors.white, size: 30), onPressed: () => _protectedNavigation(const HistoryScreen())),
-                  IconButton(icon: const Icon(Icons.person, color: Colors.white, size: 30), onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const ProfileScreen()))),
-                  IconButton(icon: const Icon(Icons.smart_toy_outlined, color: Colors.white, size: 30), onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const PestChatbotScreen()))),
               // ... your IconButtons
+              IconButton(icon: const Icon(Icons.home, color: Colors.white, size: 30), onPressed: () {}),
+              IconButton(icon: const Icon(Icons.settings, color: Colors.white, size: 30), onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => SettingsScreen(isConnected: _isConnected, deviceName: _deviceName)))),
+              IconButton(icon: const Icon(Icons.history, color: Colors.white, size: 30), onPressed: () => _protectedNavigation(const HistoryScreen())),
+              IconButton(icon: const Icon(Icons.person, color: Colors.white, size: 30), onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const ProfileScreen()))),
+              IconButton(icon: const Icon(Icons.smart_toy_outlined, color: Colors.white, size: 30), onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const PestChatbotScreen()))),
             ],
           ),
         ),

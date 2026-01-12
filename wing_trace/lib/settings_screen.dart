@@ -13,13 +13,13 @@ class SettingsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final Color primaryColor = Theme.of(context).primaryColor;
-
     return Scaffold(
-      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      backgroundColor: const Color(0xFFFDFBE7), // Matching your dashboard theme
       appBar: AppBar(
         title: const Text("Settings"),
         centerTitle: true,
+        backgroundColor: Colors.green,
+        foregroundColor: Colors.white,
       ),
       body: ListView(
         padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 15),
@@ -39,7 +39,11 @@ class SettingsScreen extends StatelessWidget {
           _buildListTile(Icons.update, "Check for Updates", "Up to date", onTap: () {
              _showUpdateDialog(context);
           }),
-          _buildListTile(Icons.security, "Privacy Policy", "View details"),
+          
+          // --- UPDATED PRIVACY POLICY TILE ---
+          _buildListTile(Icons.security, "Privacy Policy", "Data & Security", onTap: () {
+            _showPrivacyPolicy(context);
+          }),
 
           const SizedBox(height: 20),
 
@@ -52,6 +56,7 @@ class SettingsScreen extends StatelessWidget {
           _buildListTile(Icons.bug_report, "Report a Bug", "Help us improve", onTap: () {
             Navigator.push(context, MaterialPageRoute(builder: (context) => const ReportBugScreen()));
           }),
+          
           const SizedBox(height: 40),
           Center(
             child: Text(
@@ -73,8 +78,8 @@ class SettingsScreen extends StatelessWidget {
       padding: const EdgeInsets.only(left: 10, bottom: 8),
       child: Text(
         title.toUpperCase(),
-        style: TextStyle(
-          color: Theme.of(context).primaryColor,
+        style: const TextStyle(
+          color: Colors.green,
           fontWeight: FontWeight.bold,
           fontSize: 13,
           letterSpacing: 1.2,
@@ -87,7 +92,7 @@ class SettingsScreen extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(15),
       decoration: BoxDecoration(
-        color: Theme.of(context).cardColor,
+        color: Colors.white,
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10),
@@ -117,11 +122,11 @@ class SettingsScreen extends StatelessWidget {
                     const SizedBox(height: 4),
                     const Text("Serial: WT-2026-X11", style: TextStyle(color: Colors.grey, fontSize: 12)),
                     const SizedBox(height: 4),
-                    Row(
+                    const Row(
                       children: [
-                        const Icon(Icons.battery_5_bar, color: Colors.green, size: 16),
-                        const SizedBox(width: 5),
-                        Text("85% Charge", style: TextStyle(color: Colors.green[700], fontSize: 12)),
+                        Icon(Icons.battery_5_bar, color: Colors.green, size: 16),
+                        SizedBox(width: 5),
+                        Text("85% Charge", style: TextStyle(color: Colors.green, fontSize: 12)),
                       ],
                     ),
                   ],
@@ -134,7 +139,7 @@ class SettingsScreen extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
               _hwStat(Icons.wifi, "Strong", "Signal"),
-              _hwStat(Icons.thermostat, "32°C", "Temp"),
+              _hwStat(Icons.thermostat, "28°C", "Temp"),
               _hwStat(Icons.storage, "2.4 GB", "SD Card"),
             ],
           ),
@@ -155,8 +160,9 @@ class SettingsScreen extends StatelessWidget {
 
   Widget _buildListTile(IconData icon, String title, String subtitle, {VoidCallback? onTap}) {
     return Card(
+      elevation: 0,
       margin: const EdgeInsets.symmetric(vertical: 4),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15), side: BorderSide(color: Colors.green.withOpacity(0.2))),
       child: ListTile(
         leading: Icon(icon, color: Colors.green),
         title: Text(title, style: const TextStyle(fontWeight: FontWeight.w500)),
@@ -171,7 +177,8 @@ class SettingsScreen extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        border: Border.all(color: Colors.grey.withOpacity(0.3)),
+        color: Colors.white,
+        border: Border.all(color: Colors.grey.withOpacity(0.1)),
         borderRadius: BorderRadius.circular(15),
       ),
       child: Center(
@@ -181,6 +188,47 @@ class SettingsScreen extends StatelessWidget {
   }
 
   // --- Dialog Functions ---
+
+  void _showPrivacyPolicy(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.security, color: Colors.green),
+            SizedBox(width: 10),
+            Text("Privacy Policy"),
+          ],
+        ),
+        content: const SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text("Data Collection", style: TextStyle(fontWeight: FontWeight.bold)),
+              SizedBox(height: 5),
+              Text("WingTrace collect pest detection data, location for mapping, and device health stats to improve accuracy.", style: TextStyle(fontSize: 13)),
+              SizedBox(height: 15),
+              Text("User Privacy", style: TextStyle(fontWeight: FontWeight.bold)),
+              SizedBox(height: 5),
+              Text("We do not sell your personal data. All agricultural insights are anonymized for research purposes.", style: TextStyle(fontSize: 13)),
+              SizedBox(height: 15),
+              Text("Storage", style: TextStyle(fontWeight: FontWeight.bold)),
+              SizedBox(height: 5),
+              Text("Images processed by the AI are stored locally and on secured cloud servers as per college guidelines.", style: TextStyle(fontSize: 13)),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("CLOSE", style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+          )
+        ],
+      ),
+    );
+  }
 
   void _showUpdateDialog(BuildContext context) {
     showDialog(
