@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:google_generative_ai/google_generative_ai.dart';
+import 'package:http/http.dart' as http; // Use http instead of google_generative_ai
+import 'dart:convert';
 
 class PestChatbotScreen extends StatefulWidget {
   const PestChatbotScreen({super.key});
@@ -15,23 +16,12 @@ class _PestChatbotScreenState extends State<PestChatbotScreen> {
   ];
   bool _isLoading = false;
 
+  // --- CONFIGURATION ---
+  // Ensure you use your GROQ API KEY here
   static const String _apiKey = String.fromEnvironment('API_KEY');
-  late final GenerativeModel _model;
-  late final ChatSession _chat;
+  static const String _baseUrl = "https://api.groq.com/openai/v1/chat/completions";
 
-  @override
-  void initState() {
-    super.initState();
-    _model = GenerativeModel(
-      model: 'gemini-2.5-flash-lite',
-      apiKey: _apiKey,
-      systemInstruction: Content.system("You are Tracy, a pest control expert for the WingTrace app. "
-          "Provide concise, scientific, and helpful advice about mosquitoes and agricultural pests. "
-          "If the user asks about something unrelated to pests or the app, politely redirect them."),
-    );
-    _chat = _model.startChat();
-  }
-
+  // --- SEND LOGIC (GROQ COMPATIBLE) ---
   Future<void> _sendMessage(String text) async {
     if (text.trim().isEmpty) return;
 
@@ -42,23 +32,54 @@ class _PestChatbotScreenState extends State<PestChatbotScreen> {
     _controller.clear();
 
     try {
-      final response = await _chat.sendMessage(Content.text(text));
-      setState(() {
-        _messages.add({"role": "bot", "text": response.text ?? "I couldn't process that."});
-      });
+      final response = await http.post(
+        Uri.parse(_baseUrl),
+        headers: {
+          'Authorization': 'Bearer $_apiKey', // Standard Groq Auth
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          "model": "llama-3.1-8b-instant", // Your desired model
+          "messages": [
+            {
+              "role": "system", 
+              "content": "You are Tracy, a pest control expert for the WingTrace app. "
+                         "Provide concise, scientific advice about pests."
+            },
+            ..._messages.map((m) => {
+              "role": m['role'] == 'user' ? 'user' : 'assistant',
+              "content": m['text']
+            }).toList(),
+            {"role": "user", "content": text}
+          ],
+          "temperature": 0.7,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final botResponse = data['choices'][0]['message']['content']; // Parse response
+        
+        setState(() {
+          _messages.add({"role": "bot", "text": botResponse});
+        });
+      } else {
+        throw Exception("Failed to connect to Groq: ${response.statusCode}");
+      }
     } catch (e) {
       setState(() {
-        _messages.add({"role": "bot", "text": "Error: Check your API key or connection."});
+        _messages.add({"role": "bot", "text": "Error: Check your Groq API key or connection."});
       });
     } finally {
       setState(() => _isLoading = false);
     }
   }
 
+  // --- UI REMAINS THE SAME ---
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFFDFBE7), // Matching your dashboard background
+      backgroundColor: const Color(0xFFFDFBE7),
       appBar: AppBar(
         title: const Text("TRACY - Assistant"),
         backgroundColor: Colors.green,
@@ -83,8 +104,6 @@ class _PestChatbotScreenState extends State<PestChatbotScreen> {
               padding: EdgeInsets.symmetric(horizontal: 20), 
               child: LinearProgressIndicator(color: Colors.green, backgroundColor: Colors.transparent)
             ),
-          
-          // --- WRAP BOTTOM AREA IN SAFE AREA ---
           SafeArea(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -108,19 +127,13 @@ class _PestChatbotScreenState extends State<PestChatbotScreen> {
         constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
         decoration: BoxDecoration(
           color: isUser ? Colors.green : Colors.white,
-          border: isUser ? null : Border.all(color: Colors.green.withOpacity(0.2)),
-          boxShadow: [
-            BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 5, offset: const Offset(0, 2))
-          ],
           borderRadius: BorderRadius.circular(20).copyWith(
             bottomRight: isUser ? const Radius.circular(0) : const Radius.circular(20),
             bottomLeft: isUser ? const Radius.circular(20) : const Radius.circular(0),
           ),
+          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 5)],
         ),
-        child: Text(
-          text, 
-          style: TextStyle(color: isUser ? Colors.white : Colors.black87, fontSize: 15)
-        ),
+        child: Text(text, style: TextStyle(color: isUser ? Colors.white : Colors.black87)),
       ),
     );
   }
@@ -129,15 +142,12 @@ class _PestChatbotScreenState extends State<PestChatbotScreen> {
     final questions = ["Prevent Aedes?", "Dengue symptoms?", "Best repellents?"];
     return Container(
       height: 50,
-      padding: const EdgeInsets.symmetric(vertical: 5),
       child: ListView(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 10),
         children: questions.map((q) => Padding(
           padding: const EdgeInsets.symmetric(horizontal: 4),
           child: ActionChip(
-            backgroundColor: Colors.white,
-            side: const BorderSide(color: Colors.green),
             label: Text(q, style: const TextStyle(fontSize: 12, color: Colors.green)),
             onPressed: () => _sendMessage(q),
           ),
@@ -148,37 +158,21 @@ class _PestChatbotScreenState extends State<PestChatbotScreen> {
 
   Widget _buildInputArea() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 10),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, -5))
-        ],
-      ),
+      padding: const EdgeInsets.all(15),
+      color: Colors.white,
       child: Row(
         children: [
           Expanded(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 15),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF5F5F5),
-                borderRadius: BorderRadius.circular(30),
-              ),
-              child: TextField(
-                controller: _controller,
-                decoration: const InputDecoration(
-                  hintText: "Ask Tracy...", 
-                  border: InputBorder.none,
-                ),
-                onSubmitted: _sendMessage,
-              ),
+            child: TextField(
+              controller: _controller,
+              decoration: const InputDecoration(hintText: "Ask Tracy...", border: InputBorder.none),
+              onSubmitted: _sendMessage,
             ),
           ),
-          const SizedBox(width: 10),
           CircleAvatar(
             backgroundColor: Colors.green,
             child: IconButton(
-              icon: const Icon(Icons.send, color: Colors.white, size: 20),
+              icon: const Icon(Icons.send, color: Colors.white),
               onPressed: () => _sendMessage(_controller.text),
             ),
           ),
