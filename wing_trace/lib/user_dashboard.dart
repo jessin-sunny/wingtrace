@@ -1,3 +1,4 @@
+import 'dart:math'; // Required for Random()
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart'; 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -23,7 +24,6 @@ class UserDashboard extends StatefulWidget {
 }
 
 class _UserDashboardState extends State<UserDashboard> {
-  // _isLive tracks if the Bluetooth/Session is currently active
   bool _isLive = false; 
   final String _deviceName = "WingTrace v1";
   final User? _user = FirebaseAuth.instance.currentUser;
@@ -59,9 +59,23 @@ class _UserDashboardState extends State<UserDashboard> {
 
   // --- LOGIC ---
 
+  // Helper to pick a random image from your 8 assets
+  String _getRandomGhibliAsset() {
+    int index = Random().nextInt(8) + 1; // Generates 1 to 8
+    return 'assets/profile_pics/p$index.png';
+  }
+
+  // Logic to save the random choice to Firestore if the user doesn't have one yet
+  Future<void> _assignDefaultProfilePic() async {
+    if (_user == null) return;
+    String randomPic = _getRandomGhibliAsset();
+    await FirebaseFirestore.instance.collection('users').doc(_user!.uid).update({
+      'profile_pic': randomPic,
+    });
+  }
+
   void _handleConnectTap(bool hasSetup) {
     if (!hasSetup) {
-      // If user removed device in settings, this will now trigger correctly
       Navigator.push(context, MaterialPageRoute(builder: (_) => const DeviceSetupScreen()));
     } else {
       _showConnectionDialog();
@@ -90,7 +104,6 @@ class _UserDashboardState extends State<UserDashboard> {
                       const SizedBox(height: 20),
                       const Text("Searching for device...", style: TextStyle(color: Colors.white)),
                     ] else ...[
-                      // const Icon(Icons.bluetooth_connected, size: 60, color: Colors.white),
                       ClipRRect(
                         borderRadius: BorderRadius.circular(10),
                         child: Image.asset(
@@ -135,19 +148,26 @@ class _UserDashboardState extends State<UserDashboard> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFFDFBE7),
-      // THE FIX: StreamBuilder listens to Firestore changes in real-time
       body: StreamBuilder<DocumentSnapshot>(
         stream: FirebaseFirestore.instance.collection('users').doc(_user?.uid).snapshots(),
         builder: (context, snapshot) {
           bool hasSetup = false;
           String name = "Guest User";
+          String profilePic = ""; // Default empty
 
           if (snapshot.hasData && snapshot.data!.exists) {
             final data = snapshot.data!.data() as Map<String, dynamic>;
             hasSetup = data['hasCompletedSetup'] ?? false;
             name = data['name'] ?? "WingTrace User";
+            
+            // Random assignment logic
+            if (data.containsKey('profile_pic') && data['profile_pic'] != null) {
+              profilePic = data['profile_pic'];
+            } else {
+              // If field missing, assign one in the background
+              _assignDefaultProfilePic();
+            }
 
-            // AUTO-DISCONNECT: If DB says setup is gone, kill the 'Live' status immediately
             if (!hasSetup && _isLive) {
               WidgetsBinding.instance.addPostFrameCallback((_) {
                 setState(() => _isLive = false);
@@ -158,12 +178,11 @@ class _UserDashboardState extends State<UserDashboard> {
           return SingleChildScrollView(
             child: Column(
               children: [
-                _buildHeader(name),
+                _buildHeader(name, profilePic),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 20),
                   child: Column(
                     children: [
-                      // Dynamic Button (Setup Device OR Connect OR Live)
                       Align(
                         alignment: Alignment.centerRight,
                         child: Padding(
@@ -210,9 +229,9 @@ class _UserDashboardState extends State<UserDashboard> {
     );
   }
 
-  // --- SUB-WIDGETS FOR CLEANER CODE ---
+  // --- SUB-WIDGETS ---
 
-  Widget _buildHeader(String name) {
+  Widget _buildHeader(String name, String profilePicAsset) {
     return Stack(
       children: [
         Container(
@@ -226,7 +245,21 @@ class _UserDashboardState extends State<UserDashboard> {
           top: 60, left: 0, right: 0,
           child: Column(
             children: [
-              const CircleAvatar(radius: 40, backgroundColor: Colors.white, child: Icon(Icons.person, size: 50, color: Colors.grey)),
+              CircleAvatar(
+                radius: 45, 
+                backgroundColor: Colors.white, 
+                child: CircleAvatar(
+                  radius: 42,
+                  backgroundColor: Colors.grey[200],
+                  // Logic: If Firestore hasn't updated yet, show a generic icon, otherwise show the Ghibli asset
+                  backgroundImage: profilePicAsset.isNotEmpty 
+                    ? AssetImage(profilePicAsset) 
+                    : null,
+                  child: profilePicAsset.isEmpty 
+                    ? const Icon(Icons.person, size: 50, color: Colors.grey) 
+                    : null,
+                ),
+              ),
               const SizedBox(height: 10),
               Text(name, style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
             ],
@@ -327,7 +360,6 @@ class _UserDashboardState extends State<UserDashboard> {
     );
   }
 
-  // Helpers
   Widget _envStatItem(IconData icon, String value, String label) {
     return Row(
       children: [

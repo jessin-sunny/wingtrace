@@ -15,8 +15,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   late Stream<DocumentSnapshot> _userStream;
   final User? _currentUser = FirebaseAuth.instance.currentUser;
   
-  // 1. ADDED: State variable to store the name for access outside the builder
   String _currentName = "WingTrace User";
+  String _currentAvatar = ""; // Stores the asset path
 
   @override
   void initState() {
@@ -27,6 +27,62 @@ class _ProfileScreenState extends State<ProfileScreen> {
           .doc(_currentUser!.uid)
           .snapshots();
     }
+  }
+
+  // --- AVATAR SELECTION LOGIC ---
+  void _showAvatarPicker() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFFFDFBE7),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(25)),
+      ),
+      builder: (context) => Container(
+        padding: const EdgeInsets.all(20),
+        height: 400,
+        child: Column(
+          children: [
+            const Text("Choose Your Avatar", 
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.green)),
+            const SizedBox(height: 20),
+            Expanded(
+              child: GridView.builder(
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 4,
+                  crossAxisSpacing: 10,
+                  mainAxisSpacing: 10,
+                ),
+                itemCount: 8,
+                itemBuilder: (context, index) {
+                  String assetPath = 'assets/profile_pics/p${index + 1}.png';
+                  return GestureDetector(
+                    onTap: () async {
+                      await FirebaseFirestore.instance
+                          .collection('users')
+                          .doc(_currentUser!.uid)
+                          .update({'profile_pic': assetPath});
+                      if (context.mounted) Navigator.pop(context);
+                    },
+                    child: Container(
+                      decoration: BoxDecoration(
+                        border: Border.all(
+                          color: _currentAvatar == assetPath ? Colors.green : Colors.transparent,
+                          width: 3,
+                        ),
+                        shape: BoxShape.circle,
+                      ),
+                      child: CircleAvatar(
+                        backgroundImage: AssetImage(assetPath),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -40,71 +96,97 @@ class _ProfileScreenState extends State<ProfileScreen> {
         backgroundColor: Colors.green,
         elevation: 0,
       ),
-      body: Column(
-        children: [
-          const SizedBox(height: 30),
-          const Center(
-            child: CircleAvatar(
-              radius: 60,
-              backgroundColor: Colors.green,
-              child: Icon(Icons.person, size: 80, color: Colors.white),
-            ),
-          ),
-          const SizedBox(height: 20),
+      body: StreamBuilder<DocumentSnapshot>(
+        stream: _userStream,
+        builder: (context, snapshot) {
+          if (snapshot.hasData && snapshot.data!.exists) {
+            final data = snapshot.data!.data() as Map<String, dynamic>;
+            _currentName = data['name'] ?? "WingTrace User";
+            _currentAvatar = data['profile_pic'] ?? "";
+          }
 
-          // --- REAL-TIME NAME DISPLAY ---
-          StreamBuilder<DocumentSnapshot>(
-            stream: _userStream,
-            builder: (context, snapshot) {
-              if (snapshot.hasError) {
-                return const Text("Error loading name", style: TextStyle(color: Colors.red));
-              }
-
-              if (snapshot.connectionState == ConnectionState.waiting) {
-                return const Text("Loading...", style: TextStyle(fontSize: 24, color: Colors.grey));
-              }
-
-              if (snapshot.hasData && snapshot.data!.exists) {
-                final data = snapshot.data!.data() as Map<String, dynamic>;
-                // 2. UPDATED: Store the name in the state variable
-                _currentName = data['name'] ?? "WingTrace User";
-              }
-
-              return Text(
+          return Column(
+            children: [
+              const SizedBox(height: 30),
+              
+              // --- AVATAR DISPLAY WITH EDIT BUTTON ---
+              Center(
+                child: Stack(
+                  children: [
+                    CircleAvatar(
+                      radius: 65,
+                      backgroundColor: Colors.green,
+                      child: CircleAvatar(
+                        radius: 60,
+                        backgroundColor: Colors.white,
+                        backgroundImage: _currentAvatar.isNotEmpty 
+                            ? AssetImage(_currentAvatar) 
+                            : null,
+                        child: _currentAvatar.isEmpty 
+                            ? const Icon(Icons.person, size: 60, color: Colors.grey) 
+                            : null,
+                      ),
+                    ),
+                    Positioned(
+                      bottom: 0,
+                      right: 0,
+                      child: GestureDetector(
+                        onTap: _showAvatarPicker,
+                        child: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: const BoxDecoration(
+                            color: Colors.green,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(Icons.camera_alt, color: Colors.white, size: 20),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              
+              const SizedBox(height: 20),
+              Text(
                 _currentName,
                 style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-              );
-            },
-          ),
-
-          Text(userEmail, style: const TextStyle(color: Colors.grey)),
-          const SizedBox(height: 30),
-          const Divider(),
-          
-          ListTile(
-            leading: const Icon(Icons.edit, color: Colors.green),
-            title: const Text("Edit Profile"),
-            onTap: () {
-              // 3. FIXED: Now _currentName is accessible here
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => EditProfileScreen(currentName: _currentName),
-                ),
-              );
-            },
-          ),
-          
-          ListTile(
-            leading: const Icon(Icons.logout, color: Colors.red),
-            title: const Text("Logout", style: TextStyle(color: Colors.red)),
-            onTap: () => _showLogoutDialog(context),
-          ),
-        ],
+              ),
+              Text(userEmail, style: const TextStyle(color: Colors.grey)),
+              const SizedBox(height: 30),
+              const Divider(),
+              
+              ListTile(
+                leading: const Icon(Icons.edit, color: Colors.green),
+                title: const Text("Edit Profile Name"),
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => EditProfileScreen(currentName: _currentName),
+                    ),
+                  );
+                },
+              ),
+              
+              ListTile(
+                leading: const Icon(Icons.palette, color: Colors.green),
+                title: const Text("Change Avatar"),
+                onTap: _showAvatarPicker,
+              ),
+              
+              ListTile(
+                leading: const Icon(Icons.logout, color: Colors.red),
+                title: const Text("Logout", style: TextStyle(color: Colors.red)),
+                onTap: () => _showLogoutDialog(context),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
 
+  // ... (Logout Dialog remains the same)
   void _showLogoutDialog(BuildContext context) {
     showDialog(
       context: context,
