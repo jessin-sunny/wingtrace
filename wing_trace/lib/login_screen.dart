@@ -84,6 +84,67 @@ class _LoginPageState extends State<LoginPage> {
       }
     }
   }
+
+  void _showForgotPasswordDialog() {
+    final TextEditingController resetEmailController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Reset Password"),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text("Enter your email address. We will send you a link to reset your password."),
+            const SizedBox(height: 15),
+            TextField(
+              controller: resetEmailController,
+              decoration: const InputDecoration(
+                hintText: "Enter your email",
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Cancel", style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+            onPressed: () async {
+              String email = resetEmailController.text.trim();
+              if (email.isEmpty) return;
+
+              // 1. CAPTURE THE MESSENGER BEFORE CLOSING DIALOG
+              // This 'messenger' variable holds a reference to the valid root scaffold
+              final messenger = ScaffoldMessenger.of(context);
+              
+              // 2. Close Dialog immediately
+              Navigator.pop(context);
+
+              // 3. Call Firebase
+              String? error = await _authService.sendPasswordResetEmail(email);
+
+              // 4. Use the captured 'messenger' to show the snackbar
+              if (error == null) {
+                messenger.showSnackBar(
+                  const SnackBar(content: Text("Reset link sent! Check your email.")),
+                );
+              } else {
+                messenger.showSnackBar(
+                  SnackBar(content: Text("Error: $error")),
+                );
+              }
+            },
+            child: const Text("Send Link", style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -157,7 +218,7 @@ class _LoginPageState extends State<LoginPage> {
                       ),
                       
                       TextButton(
-                        onPressed: () {},
+                        onPressed:_showForgotPasswordDialog,
                         child: const Text('forgot password?', style: TextStyle(color: Colors.grey)),
                       ),
                     ],
