@@ -51,4 +51,14 @@ class AuthService {
   String? getCurrentUserId() {
     return _auth.currentUser?.uid;
   }
+
+  // 5. Password Reset Logic
+  Future<String?> sendPasswordResetEmail(String email) async {
+    try {
+      await _auth.sendPasswordResetEmail(email: email);
+      return null; // Success (null means no error)
+    } on FirebaseAuthException catch (e) {
+      return e.message; // Return error (e.g., "User not found")
+    }
+  }
 }
