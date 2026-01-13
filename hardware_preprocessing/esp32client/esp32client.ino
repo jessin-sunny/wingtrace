@@ -23,7 +23,7 @@ DHT dht(DHTPIN, DHTTYPE);
 // CONSTANTS
 // ------------------
 const char* DEVICE_ID   = "WT12012026";
-const char* SERVER_BASE = "http://10.136.196.155:5000";
+const char* SERVER_BASE = "https://wingtrace-production.up.railway.app";
 // weather timer variables
 unsigned long lastWeather = 0;
 const unsigned long WEATHER_INTERVAL = 60000; // 1 minute
