@@ -17,23 +17,44 @@ class _ReportBugScreenState extends State<ReportBugScreen> {
   Future<void> _sendEmail() async {
     final String email = 'wingtrace.team@gmail.com';
     final String subject = 'Bug Report: ${_titleController.text}';
-    final String body = 'Severity: $_selectedSeverity\n\nDescription:\n${_descriptionController.text}';
+    final String body = 'Severity: $_selectedSeverity\n\n'
+                       'Description:\n${_descriptionController.text}\n\n'
+                       'Sent from WingTrace Mobile App';
 
+    // Using queryParameters ensures proper encoding of spaces and special characters
     final Uri emailUri = Uri(
       scheme: 'mailto',
       path: email,
-      query: 'subject=${Uri.encodeComponent(subject)}&body=${Uri.encodeComponent(body)}',
+      query: _encodeQueryParameters({
+        'subject': subject,
+        'body': body,
+      }),
     );
 
-    if (await canLaunchUrl(emailUri)) {
-      await launchUrl(emailUri);
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Could not open email app")),
-      );
+    try {
+      // mode: LaunchMode.externalApplication is safer for mailto on Android/iOS
+      await launchUrl(emailUri, mode: LaunchMode.externalApplication);
+    } catch (e) {
+      debugPrint(e.toString());
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Could not open email app. Please email wingtrace.team@gmail.com directly."),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
     }
   }
 
+  // Helper function to handle URI encoding correctly
+  String? _encodeQueryParameters(Map<String, String> params) {
+    return params.entries
+        .map((MapEntry<String, String> e) =>
+            '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value)}')
+        .join('&');
+  }
+  
   @override
   Widget build(BuildContext context) {
     return Scaffold(

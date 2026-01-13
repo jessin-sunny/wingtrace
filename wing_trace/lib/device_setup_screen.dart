@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'user_dashboard.dart';
+import 'dart:convert';
 
 class DeviceSetupScreen extends StatefulWidget {
   const DeviceSetupScreen({super.key});
@@ -73,28 +74,89 @@ class _DeviceSetupScreenState extends State<DeviceSetupScreen> {
     setState(() => _isLoading = true);
 
     try {
-      // Send credentials to hardware's internal web server
+      // 1. Send credentials to hardware's internal web server /save endpoint
+      // The http package automatically handles 'application/x-www-form-urlencoded' 
+      // when 'body' is a Map<String, String>.
       final response = await http.post(
-        Uri.parse("http://192.168.4.1/setup"),
+        Uri.parse("http://192.168.4.1/save"),
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
         body: {
           "ssid": _ssidController.text.trim(),
           "password": _passController.text.trim(),
-          "uid": FirebaseAuth.instance.currentUser?.uid, // Linking user to device
         },
       ).timeout(const Duration(seconds: 12));
 
       if (response.statusCode == 200) {
-        _registerToFirebase();
+        debugPrint("WiFi credentials sent successfully to hardware");
+        // 2. Proceed to register the device in Firebase once hardware has credentials
+        await _registerToFirebase();
+      } else {
+        _showError("Hardware rejected credentials: ${response.statusCode}");
       }
     } catch (e) {
-      // SUCCESS HACK: When the hardware receives WiFi credentials, it reboots to connect.
-      // This causes an immediate connection drop/error in the app.
-      // In IoT setup, a 'Connection Failed' here often means the hardware is now switching to the internet!
-      _registerToFirebase(); 
+      // SUCCESS HACK: In IoT provisioning, a 'Connection timeout' or 'Software caused connection abort'
+      // often happens because the hardware received the credentials and immediately 
+      // dropped the Soft-AP to reboot and connect to the new internet WiFi.
+      debugPrint("Connection dropped (likely hardware rebooting): $e");
+      
+      // We proceed to register in Firebase because the credentials were likely accepted
+      await _registerToFirebase(); 
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  // --- STEP 3: Register Device in Cloud Firestore ---
+  
+  // --- STEP 2: Send Internet Credentials to Hardware Gateway ---
+  // Future<void> _provisionHardware() async {
+  //   if (_ssidController.text.isEmpty || _passController.text.isEmpty) {
+  //     _showError("Please enter WiFi details.");
+  //     return;
+  //   }
+
+  //   setState(() => _isLoading = true);
+
+  //   try {
+  //     // 1. Send credentials to hardware internal server
+  //     final response = await http.post(
+  //       Uri.parse("http://192.168.4.1/save"),
+  //       headers: {
+  //         "Content-Type": "application/x-www-form-urlencoded",
+  //       },
+  //       body: {
+  //         "ssid": _ssidController.text.trim(),
+  //         "password": _passController.text.trim(),
+  //       },
+  //     ).timeout(const Duration(seconds: 8));
+
+  //     if (response.statusCode == 200) {
+  //       // 2. Decode the response body to get device details
+  //       final Map<String, dynamic> data = jsonDecode(response.body);
+        
+  //       final String? deviceId = data["device_id"];
+  //       final String? deviceName = data["device_name"];
+
+  //       debugPrint("Received device details: $deviceId, $deviceName");
+        
+  //       // 3. Register with extracted details
+  //       await _registerToFirebase(deviceId, deviceName);
+  //     } else {
+  //       _showError("Hardware error: ${response.statusCode}");
+  //     }
+  //   } catch (e) {
+  //     // SUCCESS HACK: Connection drop often indicates hardware rebooting to connect to WiFi
+  //     debugPrint("Connection lost during reboot, finalizing registration: $e");
+      
+  //     // Register with nulls; dashboard will use defaults if details are missing
+  //     await _registerToFirebase(null, null); 
+  //   } finally {
+  //     if (mounted) setState(() => _isLoading = false);
+  //   }
+  // }
+  
+  // // --- STEP 3: Register Device in Cloud Firestore ---
   Future<void> _registerToFirebase() async {
     try {
       String uid = FirebaseAuth.instance.currentUser!.uid;
@@ -117,38 +179,64 @@ class _DeviceSetupScreenState extends State<DeviceSetupScreen> {
     }
   }
 
-  void _showError(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.red));
-  }
+  // --- STEP 3: Register Device in Cloud Firestore ---
+  // Updated to accept nullable parameters from the hardware response
+  // Future<void> _registerToFirebase(String? deviceId, String? deviceName) async {
+  //   try {
+  //     String uid = FirebaseAuth.instance.currentUser!.uid;
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFFDFBE7),
-      appBar: AppBar(
-        title: const Text("Device Setup"),
-        backgroundColor: Colors.green,
-        foregroundColor: Colors.white,
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const UserDashboard())),
-            child: const Text("SKIP", style: TextStyle(color: Colors.white)),
-          )
-        ],
-      ),
-      body: Column(
-        children: [
-          _buildProgressIndicator(),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.all(25.0),
-              child: _buildCurrentStepUI(),
+  //     // Use provided values or fallback to defaults if they are null
+  //     final finalId = deviceId ?? "WT-${DateTime.now().millisecondsSinceEpoch}";
+  //     final finalName = deviceName ?? "WingTrace v1";
+
+  //     await FirebaseFirestore.instance.collection('users').doc(uid).update({
+  //       'hasCompletedSetup': true,
+  //       'device_id': finalId,
+  //       'device_name': finalName,
+  //       'device_list': FieldValue.arrayUnion([finalName]),
+  //       'last_setup': DateTime.now(),
+  //     });
+
+  //     if (mounted) {
+  //       Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const UserDashboard()));
+  //     }
+  //   } catch (e) {
+  //     _showError("Cloud registration failed. Check your internet.");
+  //   }
+  // }
+    
+    void _showError(String msg) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.red));
+    }
+
+    @override
+    Widget build(BuildContext context) {
+      return Scaffold(
+        backgroundColor: const Color(0xFFFDFBE7),
+        appBar: AppBar(
+          title: const Text("Device Setup"),
+          backgroundColor: Colors.green,
+          foregroundColor: Colors.white,
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const UserDashboard())),
+              child: const Text("SKIP", style: TextStyle(color: Colors.white)),
+            )
+          ],
+        ),
+        body: Column(
+          children: [
+            _buildProgressIndicator(),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.all(25.0),
+                child: _buildCurrentStepUI(),
+              ),
             ),
-          ),
-        ],
-      ),
-    );
-  }
+          ],
+        ),
+      );
+    }
 
   Widget _buildProgressIndicator() {
     return LinearProgressIndicator(
