@@ -1,11 +1,23 @@
-import time
-import os
 import wave
 import threading
 from datetime import datetime
 from flask import Flask, request, jsonify
+import firebase_admin
+from firebase_admin import credentials, db
+import os, json, time
+
 
 app = Flask(__name__)
+
+# firebase setup
+firebase_key = json.loads(os.environ["FIREBASE_KEY"])
+
+cred = credentials.Certificate(firebase_key)
+
+firebase_admin.initialize_app(cred, {
+    "databaseURL": "https://wingtrace-ead16-default-rtdb.firebaseio.com/"
+})
+
 
 # ===============================
 # CONFIG (Railway safe)
@@ -77,15 +89,19 @@ def weather():
     if not device_id:
         return jsonify({"error": "deviceId missing"}), 400
 
-    devices.setdefault(device_id, {})
-    devices[device_id]["weather"] = {
+    timestamp = int(time.time())
+
+    weather_data = {
         "temperature": data.get("temperature"),
         "humidity": data.get("humidity"),
-        "updated_at": int(time.time())
+        "updated_at": timestamp
     }
 
-    print(f"[WEATHER] {device_id} → {devices[device_id]['weather']}")
-    return jsonify({"message": "weather stored"}), 200
+    db.reference(f"devices/{device_id}/weather").set(weather_data)
+
+    print(f"[WEATHER] {device_id} → {weather_data}")
+
+    return jsonify({"message": "weather stored in firebase"}), 200
 
 
 @app.route('/weather/<device_id>', methods=['GET'])
