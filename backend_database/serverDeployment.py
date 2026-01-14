@@ -74,6 +74,45 @@ def alive():
 def list_devices():
     return jsonify(devices), 200
 
+# ===============================
+# DEVICE STATUS
+# ===============================
+
+@app.route('/status', methods=['POST'])
+def update_status():
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "No JSON"}), 400
+
+    device_id = data.get("deviceId", "").strip()
+    if not device_id:
+        return jsonify({"error": "deviceId missing"}), 400
+
+    status_data = {
+        "isOnline": data.get("isOnline", True),
+        "lastSeen": int(time.time()),   # 🔥 timestamp
+        "batteryLevel": data.get("batteryLevel"),
+        "isReset": data.get("isReset", False),
+        "networkStrength": data.get("networkStrength")
+    }
+
+    db.reference(f"devices/{device_id}/status").set(status_data)
+
+    return jsonify({
+        "message": "status stored",
+        "status": status_data
+    }), 200
+
+@app.route('/status/<device_id>', methods=['GET'])
+def get_status(device_id):
+    ref = db.reference(f"devices/{device_id.strip()}/status")
+    data = ref.get()
+
+    if not data:
+        return jsonify({"error": "No status data"}), 404
+
+    return jsonify(data), 200
+
 
 # ===============================
 # WEATHER DATA
@@ -106,11 +145,14 @@ def weather():
 
 @app.route('/weather/<device_id>', methods=['GET'])
 def get_weather(device_id):
-    device = devices.get(device_id.strip())
-    if not device or "weather" not in device:
+    ref = db.reference(f"devices/{device_id.strip()}/weather")
+    data = ref.get()
+
+    if not data:
         return jsonify({"error": "No data"}), 404
 
-    return jsonify(device["weather"]), 200
+    return jsonify(data), 200
+
 
 
 # ===============================
@@ -165,53 +207,85 @@ def get_command():
 # AUDIO STREAMING
 # ===============================
 
-@app.route("/start", methods=["POST"])
-def start_recording():
-    global recording, audio_buffer
+@app.route('/audio', methods=['POST'])
+def update_audio():
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "No JSON"}), 400
 
-    audio_buffer = bytearray()
-    recording = True
+    device_id = data.get("deviceId", "").strip()
+    if not device_id:
+        return jsonify({"error": "deviceId missing"}), 400
 
-    print("🔴 Recording started")
-    return jsonify({"status": "recording started"}), 200
+    audio_data = {
+        "isRecording": data.get("isRecording", False),
+        "recentRecordings": data.get("recentRecordings", [])
+    }
 
-
-@app.route("/audio", methods=["POST"])
-def receive_audio():
-    global audio_buffer, recording
-
-    if not recording:
-        return "", 204
-
-    audio_buffer.extend(request.data)
-    return "", 204
-
-
-@app.route("/stop", methods=["POST"])
-def stop_recording():
-    global recording, audio_buffer
-
-    recording = False
-
-    if len(audio_buffer) == 0:
-        return jsonify({"error": "No audio to save"}), 400
-
-    filename = datetime.now().strftime("audio_%Y%m%d_%H%M%S.wav")
-    filepath = os.path.join(AUDIO_DIR, filename)
-
-    with wave.open(filepath, "wb") as wf:
-        wf.setnchannels(CHANNELS)
-        wf.setsampwidth(SAMPLE_WIDTH)
-        wf.setframerate(SAMPLE_RATE)
-        wf.writeframes(audio_buffer)
-
-    audio_buffer = bytearray()
-    print(f"💾 Saved {filepath}")
+    db.reference(f"devices/{device_id}/audio").set(audio_data)
 
     return jsonify({
-        "status": "recording stopped",
-        "saved_as": filename
+        "message": "audio metadata stored",
+        "audio": audio_data
     }), 200
+
+@app.route('/audio/<device_id>', methods=['GET'])
+def get_audio(device_id):
+    ref = db.reference(f"devices/{device_id.strip()}/audio")
+    data = ref.get()
+
+    if not data:
+        return jsonify({"error": "No audio data"}), 404
+
+    return jsonify(data), 200
+
+
+# @app.route("/start", methods=["POST"])
+# def start_recording():
+#     global recording, audio_buffer
+
+#     audio_buffer = bytearray()
+#     recording = True
+
+#     print("🔴 Recording started")
+#     return jsonify({"status": "recording started"}), 200
+
+
+# @app.route("/audio", methods=["POST"])
+# def receive_audio():
+#     global audio_buffer, recording
+
+#     if not recording:
+#         return "", 204
+
+#     audio_buffer.extend(request.data)
+#     return "", 204
+
+# @app.route("/stop", methods=["POST"])
+# def stop_recording():
+#     global recording, audio_buffer
+
+#     recording = False
+
+#     if len(audio_buffer) == 0:
+#         return jsonify({"error": "No audio to save"}), 400
+
+#     filename = datetime.now().strftime("audio_%Y%m%d_%H%M%S.wav")
+#     filepath = os.path.join(AUDIO_DIR, filename)
+
+#     with wave.open(filepath, "wb") as wf:
+#         wf.setnchannels(CHANNELS)
+#         wf.setsampwidth(SAMPLE_WIDTH)
+#         wf.setframerate(SAMPLE_RATE)
+#         wf.writeframes(audio_buffer)
+
+#     audio_buffer = bytearray()
+#     print(f"💾 Saved {filepath}")
+
+#     return jsonify({
+#         "status": "recording stopped",
+#         "saved_as": filename
+#     }), 200
 
 
 # ===============================
