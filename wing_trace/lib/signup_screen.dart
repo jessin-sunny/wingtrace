@@ -26,14 +26,43 @@ class _SignUpPageState extends State<SignUpPage> {
 
   // --- UPDATED LOGIC ---
   void _handleSignUp() async {
+    // 1. Check if fields are empty
     if (_nameController.text.isEmpty || 
         _emailController.text.isEmpty || 
+        _phoneController.text.isEmpty || 
         _passwordController.text.isEmpty ||
         _selectedRole == null) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please fill all fields")));
       return;
     }
 
+    // 2. NEW: Check Phone Number (10 digits)
+    String phone = _phoneController.text.trim();
+    if (!RegExp(r'^[0-9]{10}$').hasMatch(phone)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please enter a valid 10-digit mobile number"))
+      );
+      return;
+    }
+
+    // 3. NEW: Check Email Format
+    String email = _emailController.text.trim();
+    if (!RegExp(r'^[^@]+@[^@]+\.[^@]+').hasMatch(email)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please enter a valid email address"))
+      );
+      return;
+    }
+
+    // 4. NEW: Check Password Length (Firebase needs 6+)
+    if (_passwordController.text.length < 6) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Password must be at least 6 characters"))
+      );
+      return;
+    }
+
+    // 5. Check Passwords Match
     if (_passwordController.text != _confirmPassController.text) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Passwords do not match")));
       return;
@@ -43,9 +72,9 @@ class _SignUpPageState extends State<SignUpPage> {
 
     String dbRole = (_selectedRole == 'Agricultural/Health Officer') ? 'officer' : 'farmer';
 
-    // 1. Create account (Ensure your AuthService sets hasCompletedSetup: false by default)
+    // 6. Call Firebase
     String? error = await _authService.signUp(
-      _emailController.text.trim(),
+      email,
       _passwordController.text.trim(),
       _nameController.text.trim(),
       dbRole 
@@ -54,23 +83,22 @@ class _SignUpPageState extends State<SignUpPage> {
     if (!mounted) return;
 
     if (error == null) {
+      // Success Logic
       if (dbRole == 'officer') {
         Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const OfficerDashboard()));
       } else {
-        // 2. CHECK FOR DEVICE IMMEDIATELY
         bool isHardwareNearby = await _checkForNearbyDevice(); 
 
         setState(() => _isLoading = false);
 
         if (isHardwareNearby) {
-          // If device found, go to Setup Screen (Setup screen will have the SKIP button)
           Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const DeviceSetupScreen()));
         } else {
-          // If no device nearby, go straight to Dashboard
           Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const UserDashboard()));
         }
       }
     } else {
+      // Error Logic
       setState(() => _isLoading = false);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
     }
@@ -120,7 +148,15 @@ class _SignUpPageState extends State<SignUpPage> {
                     children: [
                       TextField(controller: _nameController, decoration: const InputDecoration(hintText: 'Full Name')),
                       TextField(controller: _emailController, decoration: const InputDecoration(hintText: 'Email/username')),
-                      TextField(controller: _phoneController, decoration: const InputDecoration(hintText: 'Mobile No.')),
+                      TextField(
+                        controller: _phoneController,
+                        decoration: const InputDecoration(
+                        hintText: 'Mobile No.',
+                        counterText: "", // Hides the "0/10" counter text
+                        ),
+                        keyboardType: TextInputType.number, // Shows number pad
+                        maxLength: 10, // Limits input to 10 chars automatically
+                        ),
                       DropdownButtonFormField<String>(
                         value: _selectedRole,
                         hint: const Text('Select Role'),
