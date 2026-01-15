@@ -2,13 +2,12 @@
 #include <WebServer.h>
 #include <Preferences.h>
 #include <HTTPClient.h>
+#include <WiFiClientSecure.h>   // for https [security]
 #include "DHT.h"
 #include <driver/i2s.h>
+#include <ArduinoJson.h>
 
-// ------------------
-// SENSOR CONFIG
-// ------------------
-#define DHTPIN  27
+#define DHTPIN  27        // your DHT11 pin
 #define DHTTYPE DHT11
 
 #define I2S_SCK  14
@@ -16,19 +15,20 @@
 #define I2S_SD   34
 
 #define SAMPLE_RATE 16000
-#define BUFFER_LEN  256
+#define BUFFER_LEN  256   // samples
 
 DHT dht(DHTPIN, DHTTYPE);
+WiFiClientSecure secureClient;
 
 // ------------------
 // CONSTANTS
 // ------------------
-const char* DEVICE_ID   = "WT12012026";
+const char* DEVICE_ID   = "WT12345678";
 const char* SERVER_BASE = "https://wingtrace-production.up.railway.app";
+// weather timer variables
+unsigned long lastWeather = 0;
+const unsigned long WEATHER_INTERVAL = 60000; // 1 minute
 
-// pairing
-#define PAIR_TIMEOUT_MS 300000   // 5 minutes
-#define PAIR_POLL_MS    8000     // 8 seconds
 
 // ------------------
 // OBJECTS
@@ -37,66 +37,31 @@ WebServer server(80);
 Preferences prefs;
 
 // ------------------
-// AP CONFIG
+// AP CONFIG (SETUP MODE)
 // ------------------
 const char* ap_ssid = "WingTrace_V1";
 const char* ap_password = "jsevapasn";
 
 // ------------------
-// WIFI STORAGE
+// WIFI CREDENTIALS & USERID
 // ------------------
-String temp_ssid = "";
-String temp_pass = "";
-
 String ssid = "";
 String password = "";
-
-// ------------------
-// STATE FLAGS
-// ------------------
-bool inSetupMode = false;
-bool wifiTestPending = false;
+String userid = "";
 
 // ------------------
 // TIMERS
 // ------------------
 unsigned long lastAlive = 0;
 unsigned long lastCommandPoll = 0;
-unsigned long lastWeather = 0;
 
-const unsigned long ALIVE_INTERVAL   = 300000;
-const unsigned long COMMAND_INTERVAL = 1000;
-const unsigned long WEATHER_INTERVAL = 60000;
+const unsigned long ALIVE_INTERVAL   = 300000; // 5 min
+const unsigned long COMMAND_INTERVAL = 1000;  // 1 second
 
-// ------------------
-// AUDIO
-// ------------------
 int16_t audioBuffer[BUFFER_LEN];
 bool isRecording = false;
 
-// ------------------
-// HTML SETUP PAGE
-// ------------------
-const char* setup_page = R"rawliteral(
-<!DOCTYPE html>
-<html>
-<head><title>WingTrace Setup</title></head>
-<body>
-  <h2>WiFi Setup</h2>
-  <form action="/save" method="POST">
-    SSID:<br>
-    <input type="text" name="ssid"><br><br>
-    Password:<br>
-    <input type="password" name="password"><br><br>
-    <input type="submit" value="Save">
-  </form>
-</body>
-</html>
-)rawliteral";
-
-// ------------------
-// AUDIO INIT
-// ------------------
+// audio part
 void initI2S() {
   i2s_config_t cfg = {
     .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
@@ -120,11 +85,10 @@ void initI2S() {
   i2s_driver_install(I2S_NUM_0, &cfg, 0, NULL);
   i2s_set_pin(I2S_NUM_0, &pins);
   i2s_zero_dma_buffer(I2S_NUM_0);
+
+  Serial.println("I2S initialized");
 }
 
-// ------------------
-// AUDIO STREAM
-// ------------------
 void sendAudioChunk() {
   if (!isRecording || WiFi.status() != WL_CONNECTED) return;
 
@@ -133,102 +97,57 @@ void sendAudioChunk() {
            &bytesRead, portMAX_DELAY);
 
   HTTPClient http;
-  http.begin(String(SERVER_BASE) + "/audio");
+  http.begin(secureClient, String(SERVER_BASE) + "/audio");
   http.addHeader("Content-Type", "application/octet-stream");
-  http.POST((uint8_t*)audioBuffer, bytesRead);
+
+  int code = http.POST((uint8_t*)audioBuffer, bytesRead);
+  if (code < 0) {
+    Serial.println("Audio send failed");
+  }
+
   http.end();
 }
+
 
 // ------------------
 // SETUP HANDLERS
 // ------------------
-void handleRoot() {
-  server.send(200, "text/html", setup_page);
-}
 
-void handleSave() {
-  temp_ssid = server.arg("ssid");
-  temp_pass = server.arg("password");
-
-  Serial.println("WiFi credentials received (no validation)");
-
-  String response = "{";
-  response += "\"status\":\"ok\",";
-  response += "\"device_id\":\"" + String(DEVICE_ID) + "\"";
-  response += "}";
-
-  server.send(200, "application/json", response);
-
-  // WiFi connection happens later (outside HTTP)
-  wifiTestPending = true;
-}
-
-// ------------------
-// WIFI CONNECT + PAIRING (NO WIFI VALIDATION)
-// ------------------
-void connectWiFiAndWaitForPairing() {
-  Serial.println("Switching AP → STA (no WiFi validation)");
-
-  server.stop();
-  delay(200);
-
-  WiFi.softAPdisconnect(true);
-  delay(200);
-
-  WiFi.mode(WIFI_OFF);
-  delay(300);
-
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(temp_ssid.c_str(), temp_pass.c_str());
-
-  Serial.println("Waiting for pairing (app handles WiFi failure)");
-
-  unsigned long pairStart = millis();
-  while (millis() - pairStart < PAIR_TIMEOUT_MS) {
-    if (isPairedOnServer()) {
-      saveWiFiAndReboot();
-      return;
-    }
-    delay(PAIR_POLL_MS);
+void handleSetup() {
+  if (!server.hasArg("plain")) {
+    server.send(400, "text/plain", "No body");
+    return;
   }
 
-  Serial.println("Pairing timeout → restart setup");
-  restartSetup();
-}
+  String body = server.arg("plain");
 
-bool isPairedOnServer() {
-  HTTPClient http;
-  http.begin(String(SERVER_BASE) +
-             "/pairing/status?device_id=" + DEVICE_ID);
-  int code = http.GET();
+  // Expected JSON:
+  // { "ssid":"...", "password":"...", "userid":"..." }
 
-  if (code == 200) {
-    String body = http.getString();
-    http.end();
-    return body.indexOf("paired") >= 0;
+  DynamicJsonDocument doc(256);
+  deserializeJson(doc, body);
+
+  ssid     = doc["ssid"].as<String>();
+  password = doc["password"].as<String>();
+  userid   = doc["userid"].as<String>();
+
+  if (ssid == "" || password == "" || userid == "") {
+    server.send(400, "text/plain", "Invalid data");
+    return;
   }
 
-  http.end();
-  return false;
-}
-
-void saveWiFiAndReboot() {
   prefs.begin("wifi", false);
-  prefs.putString("ssid", temp_ssid);
-  prefs.putString("pass", temp_pass);
+  prefs.putString("ssid", ssid);
+  prefs.putString("pass", password);
+  prefs.putString("userid", userid);
   prefs.end();
+
+  server.send(200, "text/plain", "OK");
 
   delay(1000);
   ESP.restart();
 }
 
-void restartSetup() {
-  WiFi.disconnect(true);
-  temp_ssid = "";
-  temp_pass = "";
-  delay(1000);
-  startSetupMode();
-}
 
 // ------------------
 // SETUP MODE
@@ -236,13 +155,11 @@ void restartSetup() {
 void startSetupMode() {
   Serial.println(">>> SETUP MODE");
 
-  inSetupMode = true;
-
-  WiFi.mode(WIFI_AP);
   WiFi.softAP(ap_ssid, ap_password);
+  Serial.print("AP IP: ");
+  Serial.println(WiFi.softAPIP());
 
-  server.on("/", handleRoot);
-  server.on("/save", HTTP_POST, handleSave);
+  server.on("/setup", HTTP_POST, handleSetup);
   server.begin();
 }
 
@@ -250,81 +167,166 @@ void startSetupMode() {
 // NORMAL MODE
 // ------------------
 void startNormalMode() {
-  inSetupMode = false;
+  Serial.println(">>> NORMAL MODE");
 
   prefs.begin("wifi", true);
   ssid = prefs.getString("ssid", "");
   password = prefs.getString("pass", "");
+  userid = prefs.getString("userid", "");
   prefs.end();
 
-  WiFi.mode(WIFI_STA);
   WiFi.begin(ssid.c_str(), password.c_str());
 
+  unsigned long startAttempt = millis();
+  while (WiFi.status() != WL_CONNECTED &&
+         millis() - startAttempt < 15000) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("\nWiFi failed → Setup mode");
+    startSetupMode();
+    return;
+  }
+
+  Serial.println("\nWiFi connected!");
+  Serial.println(WiFi.localIP());
+  secureClient.setInsecure();  // accept all certificates
+  HTTPClient http;
+  http.begin(secureClient, String(SERVER_BASE) + "/onBoard");
+  http.addHeader("Content-Type", "application/json");
+  String payload =
+    "{\"deviceId\":\"" + String(DEVICE_ID) + "\",\"userid\":\"" + String(userid)}";
+  int code = http.POST(payload);
+  Serial.println("Onboard message sent to server, code: " + String(code));
+  http.end();
   initI2S();
 }
 
 // ------------------
-// HEARTBEAT
+// SEND HEARTBEAT
 // ------------------
 void sendAlive() {
   if (WiFi.status() != WL_CONNECTED) return;
 
   HTTPClient http;
-  http.begin(String(SERVER_BASE) + "/alive");
+  http.begin(secureClient, String(SERVER_BASE) + "/alive");
   http.addHeader("Content-Type", "application/json");
 
   String payload =
     "{\"deviceId\":\"" + String(DEVICE_ID) + "\",\"status\":\"ALIVE\"}";
-  http.POST(payload);
+
+  int code = http.POST(payload);
+  Serial.println("ALIVE sent, code: " + String(code));
   http.end();
 }
 
 // ------------------
-// COMMAND POLL
+// HANDLE COMMAND
+// ------------------
+void handleCommand(String command) {
+  if (command == "RESET") {
+    Serial.println(">>> RESET COMMAND RECEIVED");
+    prefs.begin("wifi", false);
+    prefs.clear();
+    prefs.end();
+    delay(1000);
+    ESP.restart();
+  }
+
+  if (command == "START_AUDIO") {
+    Serial.println(">>> START AUDIO");
+    isRecording = true;
+  }
+
+  if (command == "STOP_AUDIO") {
+    if (!isRecording) return;   // safety
+
+    Serial.println(">>> STOP AUDIO");
+    isRecording = false;
+
+    // DO NOT call /stop here
+  }
+
+
+}
+
+
+
+
+// ------------------
+// POLL SERVER COMMAND
 // ------------------
 void pollServerCommand() {
   if (WiFi.status() != WL_CONNECTED) return;
 
   HTTPClient http;
-  http.begin(String(SERVER_BASE) + "/command?deviceId=" + DEVICE_ID);
+  String url = String(SERVER_BASE) + "/command?deviceId=" + DEVICE_ID;
+  http.begin(secureClient, url);
   int code = http.GET();
 
   if (code == 200) {
-    String cmd = http.getString();
-    if (cmd.indexOf("RESET") >= 0) {
-      prefs.begin("wifi", false);
-      prefs.clear();
-      prefs.end();
-      ESP.restart();
+    String response = http.getString();
+    if (response == "NO_COMMAND") {
+      return; // do nothing
     }
-    if (cmd.indexOf("START_AUDIO") >= 0) isRecording = true;
-    if (cmd.indexOf("STOP_AUDIO") >= 0) isRecording = false;
+    Serial.println("Command response: " + response);
+
+    if (response.indexOf("RESET") >= 0) {
+      handleCommand("RESET");
+    }
+    if (response.indexOf("START_AUDIO") >= 0) {
+      handleCommand("START_AUDIO");
+    }
+    if (response.indexOf("STOP_AUDIO") >= 0) {
+      handleCommand("STOP_AUDIO");
+    }
   }
 
   http.end();
 }
 
-// ------------------
-// WEATHER
-// ------------------
+// weather data sending
 void sendWeather() {
-  if (WiFi.status() != WL_CONNECTED) return;
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("Weather skipped: WiFi not connected");
+    return;
+  }
 
-  float h = dht.readHumidity();
-  float t = dht.readTemperature();
-  if (isnan(h) || isnan(t)) return;
+
+  float humidity = NAN;
+  float temperature = NAN;
+
+  // Try up to 3 times
+  for (int i = 0; i < 3; i++) {
+    humidity = dht.readHumidity();
+    temperature = dht.readTemperature();
+    if (!isnan(humidity) && !isnan(temperature)) {
+      break;
+    }
+    delay(2000);  // DHT needs time
+  }
+
+  if (isnan(humidity) || isnan(temperature)) {
+    Serial.println("Failed to read from DHT sensor after retries");
+    return;
+  }
+
 
   HTTPClient http;
-  http.begin(String(SERVER_BASE) + "/weather");
+  http.begin(secureClient, String(SERVER_BASE) + "/weather");
   http.addHeader("Content-Type", "application/json");
 
   String payload = "{";
   payload += "\"deviceId\":\"" + String(DEVICE_ID) + "\",";
-  payload += "\"temperature\":" + String(t, 1) + ",";
-  payload += "\"humidity\":" + String(h, 1);
+  payload += "\"temperature\":" + String(temperature, 1) + ",";
+  payload += "\"humidity\":" + String(humidity, 1);
   payload += "}";
 
-  http.POST(payload);
+  int code = http.POST(payload);
+  Serial.println("Weather sent, code: " + String(code));
+
   http.end();
 }
 
@@ -339,24 +341,20 @@ void setup() {
   prefs.begin("wifi", true);
   bool hasSSID = prefs.isKey("ssid");
   prefs.end();
-
-  if (hasSSID) startNormalMode();
-  else startSetupMode();
+  
+  if (hasSSID) {
+    startNormalMode();
+    
+  } else {
+    startSetupMode();
+  }
 }
 
 // ------------------
 // LOOP
 // ------------------
 void loop() {
-  if (inSetupMode) {
-    server.handleClient();
-  }
-
-  if (wifiTestPending) {
-    wifiTestPending = false;
-    connectWiFiAndWaitForPairing();
-    return;
-  }
+  server.handleClient();
 
   unsigned long now = millis();
 
@@ -376,6 +374,8 @@ void loop() {
   }
 
   if (isRecording) {
-    sendAudioChunk();
+    sendAudioChunk();   // continuous streaming
   }
+
 }
+

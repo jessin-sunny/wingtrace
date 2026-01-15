@@ -5,6 +5,8 @@ from flask import Flask, request, jsonify
 import firebase_admin
 from firebase_admin import credentials, db
 import os, json, time
+from firebase_admin import firestore
+
 
 
 app = Flask(__name__)
@@ -90,7 +92,7 @@ def update_status():
 
     status_data = {
         "isOnline": data.get("isOnline", True),
-        "lastSeen": int(time.time()),   # 🔥 timestamp
+        "lastSeen": int(time.time()),   # timestamp
         "batteryLevel": data.get("batteryLevel"),
         "isReset": data.get("isReset", False),
         "networkStrength": data.get("networkStrength")
@@ -158,6 +160,48 @@ def get_weather(device_id):
 # ===============================
 # CONNECTION CONTROL
 # ===============================
+# Device onboarding -  handshaking
+@app.route("/onBoard", methods=["POST"])
+def connect_device():
+    data = request.get_json(silent=True)
+
+    if not data:
+        return jsonify({"error": "Invalid JSON"}), 400
+
+    device_id = data.get("deviceId")
+    owner_id  = data.get("userid")
+
+    if not device_id or not owner_id:
+        return jsonify({"error": "Missing fields"}), 400
+
+    device_ref = db.collection("devices").document(device_id)
+    device_doc = device_ref.get()
+
+    if not device_doc.exists:
+        return jsonify({"error": "Unknown device"}), 404
+
+    # 🔹 Update device document (runtime fields only)
+    device_ref.set({
+        "ownerId": owner_id,
+        "status": "CONNECTED"
+    }, merge=True)
+
+    # 🔹 Update user document → add device to array
+    user_ref = db.collection("users").document(owner_id)
+    user_ref.set({
+        "devices": firestore.ArrayUnion([device_id])
+    }, merge=True)
+
+    print(f"[ONBOARD] {device_id} → {owner_id}")
+
+    return jsonify({
+        "status": "SUCCESS",
+        "ownerId": owner_id,
+        "deviceId": device_id
+    }), 200
+
+
+
 
 @app.route('/disconnect', methods=['POST'])
 def disconnect():
@@ -202,6 +246,44 @@ def get_command():
 
     return cmd, 200
 
+# ===============================
+# ADMIN CONTROL
+# ===============================
+# ADMIN: Manufacture a new device and add information to database
+@app.route("/addDevice", methods=["POST"])
+def add_device():
+    data = request.get_json(silent=True)
+
+    if not data:
+        return jsonify({"error": "Invalid JSON"}), 400
+
+    device_id = data.get("deviceId")
+    device_name = data.get("deviceName")
+    firmware = data.get("firmwareVersion")
+    createdAt = data.get("createdAt")
+
+    if not device_id or not device_name or not firmware:
+        return jsonify({"error": "Missing fields"}), 400
+
+    device_ref = db.collection("devices").document(device_id)
+
+    # Prevent overwriting existing device
+    if device_ref.get().exists:
+        return jsonify({"error": "Device already exists"}), 409
+
+    device_ref.set({
+        "deviceName": device_name,
+        "firmwareVersion": firmware,
+        "status": "DISCONNECTED",
+        "createdAt": createdAt,
+    })
+
+    print(f"[ADD DEVICE] {device_id} registered")
+
+    return jsonify({
+        "status": "SUCCESS",
+        "deviceId": device_id
+    }), 201
 
 # ===============================
 # AUDIO STREAMING
