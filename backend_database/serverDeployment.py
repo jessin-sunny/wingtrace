@@ -3,7 +3,7 @@ import threading
 from datetime import datetime
 from flask import Flask, request, jsonify
 import firebase_admin
-from firebase_admin import credentials, db
+from firebase_admin import credentials, db as rtdb
 import os, json, time
 from firebase_admin import firestore
 
@@ -19,6 +19,8 @@ cred = credentials.Certificate(firebase_key)
 firebase_admin.initialize_app(cred, {
     "databaseURL": "https://wingtrace-ead16-default-rtdb.firebaseio.com/"
 })
+
+fs = firestore.client()   # Firestore client
 
 
 # ===============================
@@ -98,7 +100,7 @@ def update_status():
         "networkStrength": data.get("networkStrength")
     }
 
-    db.reference(f"devices/{device_id}/status").set(status_data)
+    fs.reference(f"devices/{device_id}/status").set(status_data)
 
     return jsonify({
         "message": "status stored",
@@ -107,7 +109,7 @@ def update_status():
 
 @app.route('/status/<device_id>', methods=['GET'])
 def get_status(device_id):
-    ref = db.reference(f"devices/{device_id.strip()}/status")
+    ref = fs.reference(f"devices/{device_id.strip()}/status")
     data = ref.get()
 
     if not data:
@@ -138,7 +140,7 @@ def weather():
         "updated_at": timestamp
     }
 
-    db.reference(f"devices/{device_id}/weather").set(weather_data)
+    fs.reference(f"devices/{device_id}/weather").set(weather_data)
 
     print(f"[WEATHER] {device_id} → {weather_data}")
 
@@ -147,7 +149,7 @@ def weather():
 
 @app.route('/weather/<device_id>', methods=['GET'])
 def get_weather(device_id):
-    ref = db.reference(f"devices/{device_id.strip()}/weather")
+    ref = fs.reference(f"devices/{device_id.strip()}/weather")
     data = ref.get()
 
     if not data:
@@ -174,20 +176,20 @@ def connect_device():
     if not device_id or not owner_id:
         return jsonify({"error": "Missing fields"}), 400
 
-    device_ref = db.collection("devices").document(device_id)
+    device_ref = fs.collection("devices").document(device_id)
     device_doc = device_ref.get()
 
     if not device_doc.exists:
         return jsonify({"error": "Unknown device"}), 404
 
-    # 🔹 Update device document (runtime fields only)
+    # 🔹 Update device document
     device_ref.set({
         "ownerId": owner_id,
         "status": "CONNECTED"
     }, merge=True)
 
-    # 🔹 Update user document → add device to array
-    user_ref = db.collection("users").document(owner_id)
+    # 🔹 Update user document
+    user_ref = fs.collection("users").document(owner_id)
     user_ref.set({
         "devices": firestore.ArrayUnion([device_id])
     }, merge=True)
@@ -199,6 +201,7 @@ def connect_device():
         "ownerId": owner_id,
         "deviceId": device_id
     }), 200
+
 
 
 @app.route('/disconnect', methods=['POST'])
@@ -263,7 +266,7 @@ def add_device():
     if not device_id or not device_name or not firmware:
         return jsonify({"error": "Missing fields"}), 400
 
-    device_ref = db.collection("devices").document(device_id)
+    device_ref = fs.collection("devices").document(device_id)
 
     # Prevent overwriting existing device
     if device_ref.get().exists:
@@ -302,7 +305,7 @@ def update_audio():
         "recentRecordings": data.get("recentRecordings", [])
     }
 
-    db.reference(f"devices/{device_id}/audio").set(audio_data)
+    fs.reference(f"devices/{device_id}/audio").set(audio_data)
 
     return jsonify({
         "message": "audio metadata stored",
@@ -311,7 +314,7 @@ def update_audio():
 
 @app.route('/audio/<device_id>', methods=['GET'])
 def get_audio(device_id):
-    ref = db.reference(f"devices/{device_id.strip()}/audio")
+    ref = fs.reference(f"devices/{device_id.strip()}/audio")
     data = ref.get()
 
     if not data:
