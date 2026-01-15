@@ -169,7 +169,7 @@ def connect_device():
         return jsonify({"error": "Invalid JSON"}), 400
 
     device_id = data.get("deviceId")
-    owner_id  = data.get("userid")
+    owner_id  = data.get("userId")
 
     if not device_id or not owner_id:
         return jsonify({"error": "Missing fields"}), 400
@@ -199,8 +199,6 @@ def connect_device():
         "ownerId": owner_id,
         "deviceId": device_id
     }), 200
-
-
 
 
 @app.route('/disconnect', methods=['POST'])
