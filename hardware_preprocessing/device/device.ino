@@ -196,8 +196,7 @@ void startNormalMode() {
   HTTPClient http;
   http.begin(secureClient, String(SERVER_BASE) + "/onBoard");
   http.addHeader("Content-Type", "application/json");
-  String payload =
-    "{\"deviceId\":\"" + String(DEVICE_ID) + "\",\"userid\":\"" + String(userid)}";
+  String payload = "{\"deviceId\":\"" + String(DEVICE_ID) + "\",\"userid\":\"" + String(userid) + "\"}";
   int code = http.POST(payload);
   Serial.println("Onboard message sent to server, code: " + String(code));
   http.end();
