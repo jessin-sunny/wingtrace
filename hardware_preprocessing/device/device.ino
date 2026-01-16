@@ -39,7 +39,7 @@ Preferences prefs;
 // ------------------
 // AP CONFIG (SETUP MODE)
 // ------------------
-const char* ap_ssid = "WingTrace_V1";
+const char* ap_ssid = "WingTrace";
 const char* ap_password = "jsevapasn";
 
 // ------------------
@@ -177,7 +177,7 @@ void startNormalMode() {
   ssid = prefs.getString("ssid", "");
   password = prefs.getString("pass", "");
   userid = prefs.getString("userid", "");
-  setupToken = prefs.getString("setupToken, "");
+  setupToken = prefs.getString("setupToken", "");
   prefs.end();
 
   WiFi.begin(ssid.c_str(), password.c_str());
@@ -202,7 +202,7 @@ void startNormalMode() {
   HTTPClient http;
   http.begin(secureClient, String(SERVER_BASE) + "/onBoard");
   http.addHeader("Content-Type", "application/json");
-  String payload = "{\"deviceId\":\"" + String(DEVICE_ID) + "\",\"userid\":\"" + String(userid) + "\",\"setupToken\":\"" + String(setupToken) + "\"}";
+  String payload = "{\"deviceId\":\"" + String(DEVICE_ID) + "\",\"userId\":\"" + String(userid) + "\",\"setupToken\":\"" + String(setupToken) + "\"}";
   int code = http.POST(payload);
   Serial.println("Onboard message sent to server, code: " + String(code));
   http.end();

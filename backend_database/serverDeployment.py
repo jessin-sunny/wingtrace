@@ -181,12 +181,12 @@ def start_setup():
         "deviceId": None,
         "status": "WAITING",
         "createdAt": firestore.SERVER_TIMESTAMP,
-        "expiresAt": now + timedelta(minutes=2)
+        "expiresAt": now + timedelta(minutes=5)
     })
 
     return jsonify({
         "setupToken": setup_token,
-        "expiresIn": 120
+        "expiresIn": 300
     }), 200
 
 def expire_token_if_needed(token_ref, token_data):
