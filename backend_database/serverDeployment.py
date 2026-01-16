@@ -1,13 +1,12 @@
 import wave
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from flask import Flask, request, jsonify
 import firebase_admin
 from firebase_admin import credentials, db as rtdb
 import os, json, time
 from firebase_admin import firestore
-
-
+import uuid
 
 app = Flask(__name__)
 
@@ -162,46 +161,118 @@ def get_weather(device_id):
 # ===============================
 # CONNECTION CONTROL
 # ===============================
-# Device onboarding -  handshaking
-@app.route("/onBoard", methods=["POST"])
-def connect_device():
+@app.route("/startSetup", methods=["POST"])
+def start_setup():
     data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "Invalid JSON"}), 400
+    owner_id = data.get("userId")
+    
 
+    if not owner_id:
+        return jsonify({"error": "Missing userId"}), 400
+
+    setup_token =  uuid.uuid4().hex
+    now = datetime.now(timezone.utc)
+
+    fs.collection("setupSessions").document(setup_token).set({
+        "setupToken": setup_token,
+        "ownerId": owner_id,
+        "deviceId": None,
+        "status": "WAITING",
+        "createdAt": firestore.SERVER_TIMESTAMP,
+        "expiresAt": now + timedelta(minutes=2)
+    })
+
+    return jsonify({
+        "setupToken": setup_token,
+        "expiresIn": 120
+    }), 200
+
+def expire_token_if_needed(token_ref, token_data):
+    if token_data.get("status") != "WAITING":
+        return False
+
+    expires_at = token_data.get("expiresAt")
+    if not expires_at:
+        return False
+
+    now = datetime.now(timezone.utc)
+
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+    if expires_at < now:
+        token_ref.update({"status": "EXPIRED"})
+        return True
+
+    return False
+
+@app.route("/onBoard", methods=["POST"])
+def onBoard_device():
+    data = request.get_json(silent=True)
     if not data:
         return jsonify({"error": "Invalid JSON"}), 400
 
-    device_id = data.get("deviceId")
-    owner_id  = data.get("userId")
 
-    if not device_id or not owner_id:
+    device_id  = data.get("deviceId")
+    owner_id   = data.get("userId")
+    setupToken = data.get("setupToken")
+
+    if not device_id or not owner_id or not setupToken:
         return jsonify({"error": "Missing fields"}), 400
 
+    # 🔹 Validate setup token
+    token_ref = fs.collection("setupSessions").document(setupToken)
+    token_doc = token_ref.get()
+
+    if not token_doc.exists:
+        return jsonify({"error": "Invalid setup token"}), 403
+
+    token_data = token_doc.to_dict()
+
+    if expire_token_if_needed(token_ref, token_data):
+        return jsonify({"error": "Setup token expired"}), 403
+
+    if token_data["status"] != "WAITING":
+        return jsonify({"error": "Token already used"}), 403
+
+    if token_data["ownerId"] != owner_id:
+        return jsonify({"error": "Token-owner mismatch"}), 403
+
+    # 🔹 Validate device
     device_ref = fs.collection("devices").document(device_id)
     device_doc = device_ref.get()
 
     if not device_doc.exists:
         return jsonify({"error": "Unknown device"}), 404
 
-    # 🔹 Update device document
+    if device_doc.to_dict().get("ownerId"):
+        return jsonify({"error": "Device already owned"}), 403
+
+    # 🔹 Assign ownership
     device_ref.set({
         "ownerId": owner_id,
         "status": "CONNECTED"
     }, merge=True)
 
-    # 🔹 Update user document
-    user_ref = fs.collection("users").document(owner_id)
-    user_ref.set({
+    # 🔹 Update user
+    fs.collection("users").document(owner_id).set({
         "devices": firestore.ArrayUnion([device_id])
     }, merge=True)
+
+    # 🔹 Mark token as USED
+    token_ref.update({
+        "status": "USED",
+        "deviceId": device_id
+    })
 
     print(f"[ONBOARD] {device_id} → {owner_id}")
 
     return jsonify({
         "status": "SUCCESS",
-        "ownerId": owner_id,
         "deviceId": device_id
     }), 200
-
 
 
 @app.route('/disconnect', methods=['POST'])
@@ -321,54 +392,6 @@ def get_audio(device_id):
         return jsonify({"error": "No audio data"}), 404
 
     return jsonify(data), 200
-
-
-# @app.route("/start", methods=["POST"])
-# def start_recording():
-#     global recording, audio_buffer
-
-#     audio_buffer = bytearray()
-#     recording = True
-
-#     print("🔴 Recording started")
-#     return jsonify({"status": "recording started"}), 200
-
-
-# @app.route("/audio", methods=["POST"])
-# def receive_audio():
-#     global audio_buffer, recording
-
-#     if not recording:
-#         return "", 204
-
-#     audio_buffer.extend(request.data)
-#     return "", 204
-
-# @app.route("/stop", methods=["POST"])
-# def stop_recording():
-#     global recording, audio_buffer
-
-#     recording = False
-
-#     if len(audio_buffer) == 0:
-#         return jsonify({"error": "No audio to save"}), 400
-
-#     filename = datetime.now().strftime("audio_%Y%m%d_%H%M%S.wav")
-#     filepath = os.path.join(AUDIO_DIR, filename)
-
-#     with wave.open(filepath, "wb") as wf:
-#         wf.setnchannels(CHANNELS)
-#         wf.setsampwidth(SAMPLE_WIDTH)
-#         wf.setframerate(SAMPLE_RATE)
-#         wf.writeframes(audio_buffer)
-
-#     audio_buffer = bytearray()
-#     print(f"💾 Saved {filepath}")
-
-#     return jsonify({
-#         "status": "recording stopped",
-#         "saved_as": filename
-#     }), 200
 
 
 # ===============================
