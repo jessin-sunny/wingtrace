@@ -199,13 +199,27 @@ void startNormalMode() {
   Serial.println("\nWiFi connected!");
   Serial.println(WiFi.localIP());
   secureClient.setInsecure();  // accept all certificates
-  HTTPClient http;
-  http.begin(secureClient, String(SERVER_BASE) + "/onBoard");
-  http.addHeader("Content-Type", "application/json");
-  String payload = "{\"deviceId\":\"" + String(DEVICE_ID) + "\",\"userId\":\"" + String(userid) + "\",\"setupToken\":\"" + String(setupToken) + "\"}";
-  int code = http.POST(payload);
-  Serial.println("Onboard message sent to server, code: " + String(code));
-  http.end();
+  if (setupToken.length() > 0) {
+    HTTPClient http;
+    http.begin(secureClient, String(SERVER_BASE) + "/onBoard");
+    http.addHeader("Content-Type", "application/json");
+
+    String payload =
+      "{\"deviceId\":\"" + String(DEVICE_ID) +
+      "\",\"userId\":\"" + userid +
+      "\",\"setupToken\":\"" + setupToken + "\"}";
+
+    int code = http.POST(payload);
+    Serial.println("Onboard message sent, code: " + String(code));
+    http.end();
+
+    // CRITICAL: clear token immediately
+    prefs.begin("wifi", false);
+    prefs.remove("setupToken");
+    prefs.end();
+  } else {
+    Serial.println("Already onboarded — skipping /onBoard");
+  }
   initI2S();
   prefs.remove("setupToken");
 }
