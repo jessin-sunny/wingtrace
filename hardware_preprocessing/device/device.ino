@@ -48,6 +48,7 @@ const char* ap_password = "jsevapasn";
 String ssid = "";
 String password = "";
 String userid = "";
+String setupToken = "";
 
 // ------------------
 // TIMERS
@@ -130,8 +131,10 @@ void handleSetup() {
   ssid     = doc["ssid"].as<String>();
   password = doc["password"].as<String>();
   userid   = doc["userid"].as<String>();
+  setupToken = doc["setupToken"].as<String>();
 
-  if (ssid == "" || password == "" || userid == "") {
+
+  if (ssid == "" || password == "" || userid == "" || setupToken == "") {
     server.send(400, "text/plain", "Invalid data");
     return;
   }
@@ -140,6 +143,7 @@ void handleSetup() {
   prefs.putString("ssid", ssid);
   prefs.putString("pass", password);
   prefs.putString("userid", userid);
+  prefs.putString("setupToken", setupToken);
   prefs.end();
 
   server.send(200, "text/plain", "OK");
@@ -173,6 +177,7 @@ void startNormalMode() {
   ssid = prefs.getString("ssid", "");
   password = prefs.getString("pass", "");
   userid = prefs.getString("userid", "");
+  setupToken = prefs.getString("setupToken, "");
   prefs.end();
 
   WiFi.begin(ssid.c_str(), password.c_str());
@@ -187,6 +192,7 @@ void startNormalMode() {
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("\nWiFi failed → Setup mode");
     startSetupMode();
+    
     return;
   }
 
@@ -196,11 +202,12 @@ void startNormalMode() {
   HTTPClient http;
   http.begin(secureClient, String(SERVER_BASE) + "/onBoard");
   http.addHeader("Content-Type", "application/json");
-  String payload = "{\"deviceId\":\"" + String(DEVICE_ID) + "\",\"userid\":\"" + String(userid) + "\"}";
+  String payload = "{\"deviceId\":\"" + String(DEVICE_ID) + "\",\"userid\":\"" + String(userid) + "\",\"setupToken\":\"" + String(setupToken) + "\"}";
   int code = http.POST(payload);
   Serial.println("Onboard message sent to server, code: " + String(code));
   http.end();
   initI2S();
+  prefs.remove("setupToken");
 }
 
 // ------------------
