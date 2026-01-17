@@ -21,12 +21,18 @@ class _DeviceSetupScreenState extends State<DeviceSetupScreen> {
   final NetworkInfo _networkInfo = NetworkInfo();
   
   final String serverUrl = "https://wingtrace-production.up.railway.app";
-
   final TextEditingController _ssidController = TextEditingController();
   final TextEditingController _passController = TextEditingController();
 
   String? _setupToken;
   StreamSubscription<DocumentSnapshot>? _statusSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    // 🔹 CALL IMMEDIATELY: Get token while internet is still active
+    _fetchSetupToken(isInitial: true); 
+  }
 
   @override
   void dispose() {
@@ -38,6 +44,15 @@ class _DeviceSetupScreenState extends State<DeviceSetupScreen> {
 
   // --- STEP 1: Verify Hardware WiFi Connection ---
   Future<void> _checkWifiConnection() async {
+    // 🔹 GUARD: Do not proceed if we don't have a token from the server yet
+    if (_setupToken == null) {
+      await _fetchSetupToken();
+      if (_setupToken == null) {
+        _showError("Still waiting for internet to fetch setup token. Please check your connection.");
+        return;
+      }
+    }
+
     setState(() => _isLoading = true);
 
     Map<Permission, PermissionStatus> statuses = await [
@@ -49,11 +64,15 @@ class _DeviceSetupScreenState extends State<DeviceSetupScreen> {
       String? wifiName = await _networkInfo.getWifiName();
       String cleanSsid = wifiName?.replaceAll('"', '') ?? "";
 
+      // 🔹 STRICT VERIFICATION: Ensure we are actually on WingTrace
       if (cleanSsid.toLowerCase().startsWith("wingtrace")) {
-        // 🔹 NEW: Request Setup Token from Server before moving to Step 2
-        await _fetchSetupToken();
+        setState(() {
+          _currentStep = 1; // Advance ONLY if SSID is correct
+        });
+      } else if (cleanSsid.isEmpty || cleanSsid == "<unknown ssid>") {
+        _showError("Could not detect WiFi name. Ensure GPS/Location is ON.");
       } else {
-        _showError("Connect to 'WingTrace' WiFi first. Currently: $cleanSsid");
+        _showError("Connected to: $cleanSsid. Please switch to 'WingTrace' WiFi.");
       }
     } else {
       _showError("Location/Nearby permissions required.");
@@ -62,26 +81,29 @@ class _DeviceSetupScreenState extends State<DeviceSetupScreen> {
   }
 
   // --- STEP 1.5: Fetch Token from Railway Server ---
-  Future<void> _fetchSetupToken() async {
+  Future<void> _fetchSetupToken({bool isInitial = false}) async {
     final String? userId = FirebaseAuth.instance.currentUser?.uid;
     try {
       final response = await http.post(
         Uri.parse("$serverUrl/startSetup"),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({"userId": userId}),
-      );
+      ).timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         setState(() {
           _setupToken = data['setupToken'];
-          _currentStep = 1;
         });
-      } else {
+        debugPrint("Token fetched: $_setupToken");
+      } else if (!isInitial) {
         _showError("Server rejected setup request");
       }
     } catch (e) {
-      _showError("Failed to reach server: $e");
+      if (!isInitial) {
+        _showError("Failed to reach server. Connect to internet first.");
+      }
+      debugPrint("Token fetch error: $e");
     }
   }
 
@@ -96,7 +118,7 @@ class _DeviceSetupScreenState extends State<DeviceSetupScreen> {
     final String? userId = FirebaseAuth.instance.currentUser?.uid;
 
     try {
-      // 🔹 MATCHES ESP32 handleSetup(): expects ssid, password, userid, setupToken
+      // Send JSON to ESP32 endpoint
       final response = await http.post(
         Uri.parse("http://192.168.4.1/setup"),
         body: jsonEncode({
@@ -108,17 +130,15 @@ class _DeviceSetupScreenState extends State<DeviceSetupScreen> {
       ).timeout(const Duration(seconds: 8));
 
       if (response.statusCode == 200) {
-        debugPrint("ESP32 accepted credentials. Monitoring Firestore...");
         _listenForCompletion();
       }
     } catch (e) {
-      // Drop connection is expected on ESP32 restart
-      debugPrint("ESP32 Restarting... Monitoring Firestore...");
+      // Expected: connection drops when ESP32 restarts
       _listenForCompletion();
     }
   }
 
-  // --- STEP 3: Listen to Firestore for status = "USED" ---
+  // --- STEP 3: Monitor Firestore ---
   void _listenForCompletion() {
     if (_setupToken == null) return;
 
@@ -130,7 +150,7 @@ class _DeviceSetupScreenState extends State<DeviceSetupScreen> {
       if (snapshot.exists) {
         final data = snapshot.data();
         if (data?['status'] == "USED") {
-          _finalizeSetup(data?['deviceId']);
+          _finalizeSetup();
         } else if (data?['status'] == "EXPIRED") {
           _statusSubscription?.cancel();
           setState(() => _isLoading = false);
@@ -139,9 +159,8 @@ class _DeviceSetupScreenState extends State<DeviceSetupScreen> {
       }
     });
 
-    // 2-minute fallback timeout
     Future.delayed(const Duration(minutes: 2), () {
-      if (_isLoading) {
+      if (_isLoading && mounted) {
         _statusSubscription?.cancel();
         setState(() => _isLoading = false);
         _showError("Setup timed out. Check device internet.");
@@ -149,12 +168,10 @@ class _DeviceSetupScreenState extends State<DeviceSetupScreen> {
     });
   }
 
-  Future<void> _finalizeSetup(String? deviceId) async {
+  Future<void> _finalizeSetup() async {
     _statusSubscription?.cancel();
     try {
       String uid = FirebaseAuth.instance.currentUser!.uid;
-      // Note: Device-User link is already handled by your server's /onBoard logic
-      // We just update the local app state flag.
       await FirebaseFirestore.instance.collection('users').doc(uid).update({
         'hasCompletedSetup': true,
       });
