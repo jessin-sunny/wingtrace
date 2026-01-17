@@ -431,28 +431,32 @@ def get_audio(device_id):
 # CONTINUOSLY MONITORING
 # ===============================
 
-
 def maintenance_worker():
     token_check_counter = 0  # counts minutes
+    OFFLINE_THRESHOLD = 360  # seconds (6 minutes)
 
     while True:
         now = int(time.time())
 
         # =====================================
-        # DEVICE OFFLINE MONITOR
+        # DEVICE OFFLINE MONITOR (FIREBASE-BASED)
         # =====================================
-        with devices_lock:
-            for device_id, info in list(devices.items()):
-                last_seen = info.get("lastSeen", 0)
+        devices_snapshot = rtdb.reference("devices").get() or {}
 
-                if info.get("isOnline") and (now - last_seen > 360):
-                    info["isOnline"] = False  # in-memory update
+        for device_id, device_data in devices_snapshot.items():
+            status = device_data.get("status", {})
+            last_seen = status.get("lastSeen")
+            is_online = status.get("isOnline")
 
-                    rtdb.reference(f"devices/{device_id}/status").update({
-                        "isOnline": False
-                    })
+            if not last_seen or not is_online:
+                continue
 
-                    print(f"[DEVICE OFFLINE] {device_id}")
+            if now - last_seen > OFFLINE_THRESHOLD:
+                rtdb.reference(f"devices/{device_id}/status").update({
+                    "isOnline": False
+                })
+
+                print(f"[DEVICE OFFLINE] {device_id}")
 
         # =====================================
         # TOKEN MAINTENANCE TIMING
@@ -468,7 +472,7 @@ def maintenance_worker():
 
             waiting_tokens = (
                 fs.collection("setupSessions")
-                .where("status", "==", "WAITING")
+                .where(filter=("status", "==", "WAITING"))
                 .stream()
             )
 
@@ -497,7 +501,7 @@ def maintenance_worker():
 
             expired_tokens = (
                 fs.collection("setupSessions")
-                .where("status", "==", "EXPIRED")
+                .where(filter=("status", "==", "EXPIRED"))
                 .stream()
             )
 
