@@ -228,19 +228,38 @@ void startNormalMode() {
 // SEND HEARTBEAT
 // ------------------
 void sendAlive() {
-  if (WiFi.status() != WL_CONNECTED) return;
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("ALIVE message failed to send due to no internet");
+    return;
+  }
+
+  // Get WiFi signal strength (RSSI in dBm)
+  int networkStrength = WiFi.RSSI();   // e.g. -30 (strong) to -90 (weak)
+
+  // Fake battery level for now
+  int batteryLevel = 100;
 
   HTTPClient http;
   http.begin(secureClient, String(SERVER_BASE) + "/alive");
   http.addHeader("Content-Type", "application/json");
 
   String payload =
-    "{\"deviceId\":\"" + String(DEVICE_ID) + "\",\"status\":\"ALIVE\"}";
+    "{"
+      "\"deviceId\":\"" + String(DEVICE_ID) + "\","
+      "\"status\":\"ALIVE\","
+      "\"networkStrength\":" + String(networkStrength) + ","
+      "\"batteryLevel\":" + String(batteryLevel) +
+    "}";
 
   int code = http.POST(payload);
+
   Serial.println("ALIVE sent, code: " + String(code));
+  Serial.println("RSSI: " + String(networkStrength) + " dBm");
+  Serial.println("Battery: " + String(batteryLevel) + "%");
+
   http.end();
 }
+
 
 // ------------------
 // HANDLE COMMAND
