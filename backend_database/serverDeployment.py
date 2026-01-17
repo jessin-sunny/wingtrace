@@ -93,7 +93,7 @@ def alive():
     })
 
     # Firebase update
-    rtdb_root.child("devices").child(device_id).update({
+    rtdb.reference(f"devices/{device_id}/status").update({
         "isOnline": True,
         "lastSeen": now,
         "batteryLevel": battery_level,
@@ -170,7 +170,7 @@ def weather():
         "updated_at": timestamp
     }
 
-    rtdb_root.reference(f"devices/{device_id}/weather").set(weather_data)
+    rtdb.reference(f"devices/{device_id}/weather").set(weather_data)
 
     print(f"[WEATHER] {device_id} → {weather_data}")
 
