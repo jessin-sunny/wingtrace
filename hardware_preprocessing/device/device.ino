@@ -57,7 +57,7 @@ unsigned long lastAlive = 0;
 unsigned long lastCommandPoll = 0;
 
 const unsigned long ALIVE_INTERVAL   = 300000; // 5 min
-const unsigned long COMMAND_INTERVAL = 1000;  // 1 second
+const unsigned long COMMAND_INTERVAL = 5000;  // 5 second
 
 int16_t audioBuffer[BUFFER_LEN];
 bool isRecording = false;
@@ -222,6 +222,8 @@ void startNormalMode() {
   }
   initI2S();
   prefs.remove("setupToken");
+  sendAlive();
+  lastAlive = millis();
 }
 
 // ------------------

@@ -19,6 +19,7 @@ firebase_admin.initialize_app(cred, {
     "databaseURL": "https://wingtrace-ead16-default-rtdb.firebaseio.com/"
 })
 
+rtdb_root = rtdb.reference()
 fs = firestore.client()   # Firestore client
 
 
@@ -53,6 +54,16 @@ recording = False
 # DEVICE HEARTBEAT
 # ===============================
 
+# Network Strength Classification
+def classify_network_strength(rssi):
+    if rssi is None:
+        return "UNKNOWN"
+    if rssi >= -55:
+        return "STRONG"
+    elif rssi >= -70:
+        return "MODERATE"
+    else:
+        return "WEAK"
 # Alive message
 @app.route('/alive', methods=['POST'])
 def alive():
@@ -82,7 +93,7 @@ def alive():
     })
 
     # Firebase update
-    rtdb.child("devices").child(device_id).update({
+    rtdb_root.child("devices").child(device_id).update({
         "isOnline": True,
         "lastSeen": now,
         "batteryLevel": battery_level,
@@ -91,17 +102,6 @@ def alive():
 
     print(f"[ALIVE] {device_id} | RSSI={rssi} | SIGNAL={signal_quality} | Battery Level={battery_level}")
     return jsonify({"message": "ALIVE received"}), 200
-
-# Network Strength Classification
-def classify_network_strength(rssi):
-    if rssi is None:
-        return "UNKNOWN"
-    if rssi >= -55:
-        return "STRONG"
-    elif rssi >= -70:
-        return "MODERATE"
-    else:
-        return "WEAK"
 
 
 @app.route('/devices', methods=['GET'])
@@ -170,7 +170,7 @@ def weather():
         "updated_at": timestamp
     }
 
-    fs.reference(f"devices/{device_id}/weather").set(weather_data)
+    rtdb_root.reference(f"devices/{device_id}/weather").set(weather_data)
 
     print(f"[WEATHER] {device_id} → {weather_data}")
 
@@ -179,7 +179,7 @@ def weather():
 
 @app.route('/weather/<device_id>', methods=['GET'])
 def get_weather(device_id):
-    ref = fs.reference(f"devices/{device_id.strip()}/weather")
+    ref = rtdb_root.reference(f"devices/{device_id.strip()}/weather")
     data = ref.get()
 
     if not data:
@@ -399,63 +399,6 @@ def add_device():
         "deviceId": device_id
     }), 201
 
-
-# Token Expiry Updation
-@app.route("/expireSetupTokens", methods=["POST"])
-def admin_expire_tokens():
-    if not require_admin(request):
-        return jsonify({"error": "Unauthorized"}), 401
-
-    now = datetime.now(timezone.utc)
-    expired_count = 0
-
-    tokens = (
-        fs.collection("setupSessions")
-        .where("status", "==", "WAITING")
-        .stream()
-    )
-
-    for doc in tokens:
-        data = doc.to_dict()
-        expires_at = data.get("expiresAt")
-
-        if not expires_at:
-            continue
-
-        if expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
-
-        if expires_at < now:
-            doc.reference.update({"status": "EXPIRED"})
-            expired_count += 1
-
-    return jsonify({
-        "status": "OK",
-        "expiredUpdated": expired_count
-    }), 200
-
-# Expired Token Deletion
-@app.route("/deleteExpiredSetupTokens", methods=["POST"])
-def admin_delete_expired_tokens():
-    if not require_admin(request):
-        return jsonify({"error": "Unauthorized"}), 401
-
-    deleted_count = 0
-
-    tokens = (
-        fs.collection("setupSessions")
-        .where("status", "==", "EXPIRED")
-        .stream()
-    )
-
-    for doc in tokens:
-        doc.reference.delete()
-        deleted_count += 1
-
-    return jsonify({
-        "status": "OK",
-        "deleted": deleted_count
-    }), 200
 
 
 # ===============================
