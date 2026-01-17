@@ -48,10 +48,12 @@ device_commands = {}   # pending commands
 audio_buffer = bytearray()
 recording = False
 
+
 # ===============================
 # DEVICE HEARTBEAT
 # ===============================
 
+# Alive message
 @app.route('/alive', methods=['POST'])
 def alive():
     data = request.get_json(silent=True)
@@ -62,15 +64,44 @@ def alive():
     if not device_id:
         return jsonify({"error": "deviceId missing"}), 400
 
+    # Raw values from ESP32
+    battery_level = data.get("batteryLevel", None)
+    rssi = data.get("networkStrength", None)
+
+    # Server-side decisions
+    signal_quality = classify_network_strength(rssi)
+    now = int(time.time())
+
+    # In-memory device state
     devices.setdefault(device_id, {})
     devices[device_id].update({
-        "status": "ONLINE",
-        "last_seen": int(time.time()),
-        "user_connected": True
+        "isOnline": True,
+        "lastSeen": now,
+        "batteryLevel": battery_level,
+        "networkStrength": signal_quality,
     })
 
-    print(f"[ALIVE] {device_id} ONLINE")
+    # Firebase update
+    rtdb.child("devices").child(device_id).update({
+        "isOnline": True,
+        "lastSeen": now,
+        "batteryLevel": battery_level,
+        "networkStrength": signal_quality
+    })
+
+    print(f"[ALIVE] {device_id} | RSSI={rssi} | SIGNAL={signal_quality} | Battery Level={battery_level}")
     return jsonify({"message": "ALIVE received"}), 200
+
+# Network Strength Classification
+def classify_network_strength(rssi):
+    if rssi is None:
+        return "UNKNOWN"
+    if rssi >= -55:
+        return "STRONG"
+    elif rssi >= -70:
+        return "MODERATE"
+    else:
+        return "WEAK"
 
 
 @app.route('/devices', methods=['GET'])
@@ -466,27 +497,89 @@ def get_audio(device_id):
 
 # ===============================
 # OFFLINE CHECKER THREAD
+# CONTINUOSLY MONITORING
 # ===============================
 
-ALIVE_TIMEOUT = 5 * 60
 
-def offline_checker():
+def maintenance_worker():
+    token_check_counter = 0  # minutes
+
     while True:
         now = int(time.time())
-        for device_id, info in list(devices.items()):
-            if info.get("user_connected"):
-                last_seen = info.get("last_seen", 0)
-                if now - last_seen > ALIVE_TIMEOUT:
-                    if info.get("status") != "OFFLINE":
-                        info["status"] = "OFFLINE"
-                        print(f"[OFFLINE] {device_id}")
-        time.sleep(60)
 
+        # =====================================
+        # DEVICE OFFLINE MONITOR
+        # =====================================
+        for device_id, info in devices.items():
+            last_seen = info.get("lastSeen", 0)
+
+            if info.get("isOnline") and (now - last_seen > 360):
+                info["isOnline"] = False   # server memory update
+
+                rtdb.child("devices").child(device_id).update({
+                    "isOnline": False
+                })
+
+                print(f"[DEVICE OFFLINE] {device_id}")
+
+        # =====================================
+        # SETUP TOKEN EXPIRY (every 6 mins)
+        # =====================================
+        token_check_counter += 1
+
+        if token_check_counter >= 6:
+            now_utc = datetime.now(timezone.utc)
+
+            expired_docs = []
+            waiting_tokens = (
+                fs.collection("setupSessions")
+                .where("status", "==", "WAITING")
+                .stream()
+            )
+
+            for doc in waiting_tokens:
+                data = doc.to_dict()
+                expires_at = data.get("expiresAt")
+
+                if not expires_at:
+                    continue
+
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+                if expires_at < now_utc:
+                    doc.reference.update({"status": "EXPIRED"})
+                    expired_docs.append(doc.id)
+
+            if expired_docs:
+                print(f"[TOKEN EXPIRED] {len(expired_docs)} updated")
+
+        # =====================================
+        # DELETE EXPIRED TOKENS (same cycle)
+        # =====================================
+        if token_check_counter >= 6:
+            deleted_count = 0
+            expired_tokens = (
+                fs.collection("setupSessions")
+                .where("status", "==", "EXPIRED")
+                .stream()
+            )
+
+            for doc in expired_tokens:
+                doc.reference.delete()
+                deleted_count += 1
+
+            if deleted_count:
+                print(f"[TOKEN DELETED] {deleted_count} removed")
+
+            token_check_counter = 0  # reset
+
+        time.sleep(60)
 
 # ===============================
 # ENTRY POINT
 # ===============================
 
 if __name__ == '__main__':
-    threading.Thread(target=offline_checker, daemon=True).start()
+    threading.Thread(target=maintenance_worker, daemon=True).start()
     app.run(host="0.0.0.0", port=PORT)
