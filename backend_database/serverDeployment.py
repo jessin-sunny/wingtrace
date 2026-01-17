@@ -22,7 +22,6 @@ firebase_admin.initialize_app(cred, {
 rtdb_root = rtdb.reference()
 fs = firestore.client()   # Firestore client
 
-
 # ===============================
 # CONFIG (Railway safe)
 # ===============================
@@ -113,39 +112,20 @@ def list_devices():
 # ===============================
 
 @app.route('/status', methods=['POST'])
-def update_status():
-    data = request.get_json(silent=True)
-    if not data:
-        return jsonify({"error": "No JSON"}), 400
-
+def get_status():
+    data = request.get_json(force=True)
     device_id = data.get("deviceId", "").strip()
+
     if not device_id:
         return jsonify({"error": "deviceId missing"}), 400
 
-    status_data = {
-        "isOnline": data.get("isOnline", True),
-        "lastSeen": int(time.time()),   # timestamp
-        "batteryLevel": data.get("batteryLevel"),
-        "isReset": data.get("isReset", False),
-        "networkStrength": data.get("networkStrength")
-    }
+    ref = rtdb.reference(f"devices/{device_id}/status")
+    status_data = ref.get()
 
-    fs.reference(f"devices/{device_id}/status").set(status_data)
-
-    return jsonify({
-        "message": "status stored",
-        "status": status_data
-    }), 200
-
-@app.route('/status/<device_id>', methods=['GET'])
-def get_status(device_id):
-    ref = fs.reference(f"devices/{device_id.strip()}/status")
-    data = ref.get()
-
-    if not data:
+    if not status_data:
         return jsonify({"error": "No status data"}), 404
 
-    return jsonify(data), 200
+    return jsonify(status_data), 200
 
 
 # ===============================
@@ -177,16 +157,21 @@ def weather():
     return jsonify({"message": "weather stored in firebase"}), 200
 
 
-@app.route('/weather/<device_id>', methods=['GET'])
-def get_weather(device_id):
-    ref = rtdb_root.reference(f"devices/{device_id.strip()}/weather")
-    data = ref.get()
+@app.route('/weatherRetrieval', methods=['POST'])
+def get_weather():
+    data = request.get_json(force=True)
+    device_id = data.get("deviceId", "").strip()
 
-    if not data:
-        return jsonify({"error": "No data"}), 404
+    if not device_id:
+        return jsonify({"error": "deviceId missing"}), 400
 
-    return jsonify(data), 200
+    ref = rtdb.reference(f"devices/{device_id}/weather")
+    weather_data = ref.get()
 
+    if not weather_data:
+        return jsonify({"error": "No weather data"}), 404
+
+    return jsonify(weather_data), 200
 
 
 # ===============================
@@ -519,10 +504,16 @@ def maintenance_worker():
 
         time.sleep(60)
 
+# Thread Run
+monitor_thread = threading.Thread(
+    target=maintenance_worker,
+    daemon=True
+)
+monitor_thread.start()
+
 # ===============================
 # ENTRY POINT
 # ===============================
 
 if __name__ == '__main__':
-    threading.Thread(target=maintenance_worker, daemon=True).start()
     app.run(host="0.0.0.0", port=PORT)
