@@ -2,8 +2,10 @@
 #include <WebServer.h>
 #include <Preferences.h>
 #include <HTTPClient.h>
+#include <WiFiClientSecure.h>   // for https [security]
 #include "DHT.h"
 #include <driver/i2s.h>
+#include <ArduinoJson.h>
 
 #define DHTPIN  27        // your DHT11 pin
 #define DHTTYPE DHT11
@@ -15,14 +17,13 @@
 #define SAMPLE_RATE 16000
 #define BUFFER_LEN  256   // samples
 
-
 DHT dht(DHTPIN, DHTTYPE);
-
+WiFiClientSecure secureClient;
 
 // ------------------
 // CONSTANTS
 // ------------------
-const char* DEVICE_ID   = "WT12012026";
+const char* DEVICE_ID   = "WT12345678";
 const char* SERVER_BASE = "https://wingtrace-production.up.railway.app";
 // weather timer variables
 unsigned long lastWeather = 0;
@@ -38,14 +39,16 @@ Preferences prefs;
 // ------------------
 // AP CONFIG (SETUP MODE)
 // ------------------
-const char* ap_ssid = "WingTrace_V1";
+const char* ap_ssid = "WingTrace";
 const char* ap_password = "jsevapasn";
 
 // ------------------
-// WIFI CREDENTIALS
+// WIFI CREDENTIALS & USERID
 // ------------------
 String ssid = "";
 String password = "";
+String userid = "";
+String setupToken = "";
 
 // ------------------
 // TIMERS
@@ -58,26 +61,6 @@ const unsigned long COMMAND_INTERVAL = 1000;  // 1 second
 
 int16_t audioBuffer[BUFFER_LEN];
 bool isRecording = false;
-
-// ------------------
-// HTML SETUP PAGE
-// ------------------
-const char* setup_page = R"rawliteral(
-<!DOCTYPE html>
-<html>
-<head><title>WingTrace Setup</title></head>
-<body>
-  <h2>WiFi Setup</h2>
-  <form action="/save" method="POST">
-    SSID:<br>
-    <input type="text" name="ssid"><br><br>
-    Password:<br>
-    <input type="password" name="password"><br><br>
-    <input type="submit" value="Save">
-  </form>
-</body>
-</html>
-)rawliteral";
 
 // audio part
 void initI2S() {
@@ -115,7 +98,7 @@ void sendAudioChunk() {
            &bytesRead, portMAX_DELAY);
 
   HTTPClient http;
-  http.begin(String(SERVER_BASE) + "/audio");
+  http.begin(secureClient, String(SERVER_BASE) + "/audio");
   http.addHeader("Content-Type", "application/octet-stream");
 
   int code = http.POST((uint8_t*)audioBuffer, bytesRead);
@@ -130,25 +113,45 @@ void sendAudioChunk() {
 // ------------------
 // SETUP HANDLERS
 // ------------------
-void handleRoot() {
-  server.send(200, "text/html", setup_page);
-}
 
-void handleSave() {
-  ssid = server.arg("ssid");
-  password = server.arg("password");
+void handleSetup() {
+  if (!server.hasArg("plain")) {
+    server.send(400, "text/plain", "No body");
+    return;
+  }
+
+  String body = server.arg("plain");
+
+  // Expected JSON:
+  // { "ssid":"...", "password":"...", "userid":"..." }
+
+  DynamicJsonDocument doc(256);
+  deserializeJson(doc, body);
+
+  ssid     = doc["ssid"].as<String>();
+  password = doc["password"].as<String>();
+  userid   = doc["userid"].as<String>();
+  setupToken = doc["setupToken"].as<String>();
+
+
+  if (ssid == "" || password == "" || userid == "" || setupToken == "") {
+    server.send(400, "text/plain", "Invalid data");
+    return;
+  }
 
   prefs.begin("wifi", false);
   prefs.putString("ssid", ssid);
   prefs.putString("pass", password);
+  prefs.putString("userid", userid);
+  prefs.putString("setupToken", setupToken);
   prefs.end();
 
-  server.send(200, "text/plain",
-              "Credentials saved. Device will reboot.");
+  server.send(200, "text/plain", "OK");
 
-  delay(2000);
+  delay(1000);
   ESP.restart();
 }
+
 
 // ------------------
 // SETUP MODE
@@ -160,8 +163,7 @@ void startSetupMode() {
   Serial.print("AP IP: ");
   Serial.println(WiFi.softAPIP());
 
-  server.on("/", handleRoot);
-  server.on("/save", HTTP_POST, handleSave);
+  server.on("/setup", HTTP_POST, handleSetup);
   server.begin();
 }
 
@@ -174,6 +176,8 @@ void startNormalMode() {
   prefs.begin("wifi", true);
   ssid = prefs.getString("ssid", "");
   password = prefs.getString("pass", "");
+  userid = prefs.getString("userid", "");
+  setupToken = prefs.getString("setupToken", "");
   prefs.end();
 
   WiFi.begin(ssid.c_str(), password.c_str());
@@ -188,12 +192,36 @@ void startNormalMode() {
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("\nWiFi failed → Setup mode");
     startSetupMode();
+    
     return;
   }
 
   Serial.println("\nWiFi connected!");
   Serial.println(WiFi.localIP());
+  secureClient.setInsecure();  // accept all certificates
+  if (setupToken.length() > 0) {
+    HTTPClient http;
+    http.begin(secureClient, String(SERVER_BASE) + "/onBoard");
+    http.addHeader("Content-Type", "application/json");
+
+    String payload =
+      "{\"deviceId\":\"" + String(DEVICE_ID) +
+      "\",\"userId\":\"" + userid +
+      "\",\"setupToken\":\"" + setupToken + "\"}";
+
+    int code = http.POST(payload);
+    Serial.println("Onboard message sent, code: " + String(code));
+    http.end();
+
+    // CRITICAL: clear token immediately
+    prefs.begin("wifi", false);
+    prefs.remove("setupToken");
+    prefs.end();
+  } else {
+    Serial.println("Already onboarded — skipping /onBoard");
+  }
   initI2S();
+  prefs.remove("setupToken");
 }
 
 // ------------------
@@ -203,7 +231,7 @@ void sendAlive() {
   if (WiFi.status() != WL_CONNECTED) return;
 
   HTTPClient http;
-  http.begin(String(SERVER_BASE) + "/alive");
+  http.begin(secureClient, String(SERVER_BASE) + "/alive");
   http.addHeader("Content-Type", "application/json");
 
   String payload =
@@ -254,10 +282,8 @@ void pollServerCommand() {
   if (WiFi.status() != WL_CONNECTED) return;
 
   HTTPClient http;
-  String url = String(SERVER_BASE) +
-               "/command?deviceId=" + DEVICE_ID;
-
-  http.begin(url);
+  String url = String(SERVER_BASE) + "/command?deviceId=" + DEVICE_ID;
+  http.begin(secureClient, url);
   int code = http.GET();
 
   if (code == 200) {
@@ -309,7 +335,7 @@ void sendWeather() {
 
 
   HTTPClient http;
-  http.begin(String(SERVER_BASE) + "/weather");
+  http.begin(secureClient, String(SERVER_BASE) + "/weather");
   http.addHeader("Content-Type", "application/json");
 
   String payload = "{";
