@@ -161,6 +161,8 @@ def get_weather(device_id):
 # ===============================
 # CONNECTION CONTROL
 # ===============================
+
+# App calls
 @app.route("/startSetup", methods=["POST"])
 def start_setup():
     data = request.get_json(silent=True)
@@ -208,6 +210,7 @@ def expire_token_if_needed(token_ref, token_data):
 
     return False
 
+# Device calls
 @app.route("/onBoard", methods=["POST"])
 def onBoard_device():
     data = request.get_json(silent=True)
@@ -321,18 +324,26 @@ def get_command():
 # ===============================
 # ADMIN CONTROL
 # ===============================
+
+# Admin check
+def require_admin(req):
+    admin_key = req.headers.get("X-ADMIN-KEY")
+    return admin_key == os.getenv("ADMIN_SECRET_KEY")
+
 # ADMIN: Manufacture a new device and add information to database
 @app.route("/addDevice", methods=["POST"])
 def add_device():
-    data = request.get_json(silent=True)
+    if not require_admin(request):
+        return jsonify({"error": "Unauthorized"}), 401
 
+    data = request.get_json(silent=True)
     if not data:
         return jsonify({"error": "Invalid JSON"}), 400
 
-    device_id = data.get("deviceId")
+    device_id   = data.get("deviceId")
     device_name = data.get("deviceName")
-    firmware = data.get("firmwareVersion")
-    createdAt = data.get("createdAt")
+    firmware    = data.get("firmwareVersion")
+    createdAt   = data.get("createdAt")
 
     if not device_id or not device_name or not firmware:
         return jsonify({"error": "Missing fields"}), 400
@@ -356,6 +367,65 @@ def add_device():
         "status": "SUCCESS",
         "deviceId": device_id
     }), 201
+
+
+# Token Expiry Updation
+@app.route("/expireSetupTokens", methods=["POST"])
+def admin_expire_tokens():
+    if not require_admin(request):
+        return jsonify({"error": "Unauthorized"}), 401
+
+    now = datetime.now(timezone.utc)
+    expired_count = 0
+
+    tokens = (
+        fs.collection("setupSessions")
+        .where("status", "==", "WAITING")
+        .stream()
+    )
+
+    for doc in tokens:
+        data = doc.to_dict()
+        expires_at = data.get("expiresAt")
+
+        if not expires_at:
+            continue
+
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+        if expires_at < now:
+            doc.reference.update({"status": "EXPIRED"})
+            expired_count += 1
+
+    return jsonify({
+        "status": "OK",
+        "expiredUpdated": expired_count
+    }), 200
+
+# Expired Token Deletion
+@app.route("/deleteExpiredSetupTokens", methods=["POST"])
+def admin_delete_expired_tokens():
+    if not require_admin(request):
+        return jsonify({"error": "Unauthorized"}), 401
+
+    deleted_count = 0
+
+    tokens = (
+        fs.collection("setupSessions")
+        .where("status", "==", "EXPIRED")
+        .stream()
+    )
+
+    for doc in tokens:
+        doc.reference.delete()
+        deleted_count += 1
+
+    return jsonify({
+        "status": "OK",
+        "deleted": deleted_count
+    }), 200
+
 
 # ===============================
 # AUDIO STREAMING
