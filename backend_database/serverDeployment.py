@@ -42,11 +42,11 @@ SAMPLE_WIDTH = 2  # 16-bit PCM
 # GLOBAL STATE (in-memory)
 # ===============================
 
+devices = {}           # device status
+device_commands = {}   # pending commands
+
 audio_buffer = bytearray()
 recording = False
-
-devices = {}           # device status & weather
-device_commands = {}   # pending commands
 
 # ===============================
 # DEVICE HEARTBEAT
