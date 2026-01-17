@@ -7,6 +7,7 @@ from firebase_admin import credentials, db as rtdb
 import os, json, time
 from firebase_admin import firestore
 import uuid
+from threading import Lock
 
 app = Flask(__name__)
 
@@ -21,6 +22,8 @@ firebase_admin.initialize_app(cred, {
 
 rtdb_root = rtdb.reference()
 fs = firestore.client()   # Firestore client
+
+devices_lock = Lock()   # Thread Safety
 
 # ===============================
 # CONFIG (Railway safe)
@@ -430,7 +433,7 @@ def get_audio(device_id):
 
 
 def maintenance_worker():
-    token_check_counter = 0  # minutes
+    token_check_counter = 0  # counts minutes
 
     while True:
         now = int(time.time())
@@ -438,27 +441,31 @@ def maintenance_worker():
         # =====================================
         # DEVICE OFFLINE MONITOR
         # =====================================
-        for device_id, info in devices.items():
-            last_seen = info.get("lastSeen", 0)
+        with devices_lock:
+            for device_id, info in list(devices.items()):
+                last_seen = info.get("lastSeen", 0)
 
-            if info.get("isOnline") and (now - last_seen > 360):
-                info["isOnline"] = False   # server memory update
+                if info.get("isOnline") and (now - last_seen > 360):
+                    info["isOnline"] = False  # in-memory update
 
-                rtdb.child("devices").child(device_id).update({
-                    "isOnline": False
-                })
+                    rtdb.reference(f"devices/{device_id}/status").update({
+                        "isOnline": False
+                    })
 
-                print(f"[DEVICE OFFLINE] {device_id}")
+                    print(f"[DEVICE OFFLINE] {device_id}")
 
         # =====================================
-        # SETUP TOKEN EXPIRY (every 6 mins)
+        # TOKEN MAINTENANCE TIMING
         # =====================================
         token_check_counter += 1
+        now_utc = datetime.now(timezone.utc)
 
-        if token_check_counter >= 6:
-            now_utc = datetime.now(timezone.utc)
+        # -------------------------------------
+        # EXPIRE SETUP TOKENS (every 5 minutes)
+        # -------------------------------------
+        if token_check_counter % 5 == 0:
+            expired_count = 0
 
-            expired_docs = []
             waiting_tokens = (
                 fs.collection("setupSessions")
                 .where("status", "==", "WAITING")
@@ -477,16 +484,17 @@ def maintenance_worker():
 
                 if expires_at < now_utc:
                     doc.reference.update({"status": "EXPIRED"})
-                    expired_docs.append(doc.id)
+                    expired_count += 1
 
-            if expired_docs:
-                print(f"[TOKEN EXPIRED] {len(expired_docs)} updated")
+            if expired_count:
+                print(f"[TOKEN EXPIRED] {expired_count} marked")
 
-        # =====================================
-        # DELETE EXPIRED TOKENS (same cycle)
-        # =====================================
-        if token_check_counter >= 6:
+        # -------------------------------------
+        # DELETE EXPIRED TOKENS (every 10 minutes)
+        # -------------------------------------
+        if token_check_counter % 10 == 0:
             deleted_count = 0
+
             expired_tokens = (
                 fs.collection("setupSessions")
                 .where("status", "==", "EXPIRED")
@@ -500,9 +508,7 @@ def maintenance_worker():
             if deleted_count:
                 print(f"[TOKEN DELETED] {deleted_count} removed")
 
-            token_check_counter = 0  # reset
-
-        time.sleep(60)
+        time.sleep(60)  # run once per minute
 
 # Thread Run
 monitor_thread = threading.Thread(
