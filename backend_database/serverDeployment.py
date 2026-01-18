@@ -8,6 +8,7 @@ import os, json, time
 from firebase_admin import firestore
 import uuid
 from threading import Lock
+from google.cloud.firestore_v1 import FieldFilter
 
 app = Flask(__name__)
 
@@ -472,7 +473,7 @@ def maintenance_worker():
 
             waiting_tokens = (
                 fs.collection("setupSessions")
-                .where(filter=("status", "==", "WAITING"))
+                .where(filter=FieldFilter("status", "==", "WAITING"))
                 .stream()
             )
 
@@ -501,7 +502,7 @@ def maintenance_worker():
 
             expired_tokens = (
                 fs.collection("setupSessions")
-                .where(filter=("status", "==", "EXPIRED"))
+                .where(filter=FieldFilter("status", "==", "EXPIRED"))
                 .stream()
             )
 
