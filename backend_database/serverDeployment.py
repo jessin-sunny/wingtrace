@@ -292,6 +292,8 @@ def onBoard_device():
 
     print(f"[ONBOARD] {device_id} → {owner_id}")
 
+    device_commands.pop(device_id, None)  # clear stale commands
+
     return jsonify({
         "status": "SUCCESS",
         "deviceId": device_id
@@ -303,36 +305,104 @@ def disconnect():
     data = request.get_json(silent=True)
     device_id = data.get("deviceId", "").strip() if data else ""
 
-    if not device_id or device_id not in devices:
-        return jsonify({"error": "Invalid deviceId"}), 400
+    if not device_id:
+        return jsonify({"error": "deviceId required"}), 400
 
-    devices[device_id]["status"] = "OFFLINE"
-    devices[device_id]["user_connected"] = False
+    # 🔹 Update RTDB status
+    rtdb.reference(f"devices/{device_id}/status").update({
+        "isOnline": False
+    })
 
-    print(f"[DISCONNECT] {device_id}")
-    return jsonify({"message": "Device disconnected"}), 200
+    # 🔹 Update in-memory state (best-effort)
+    if device_id in devices:
+        devices[device_id]["isOnline"] = False
+
+    # 🔹 Clear pending commands (important)
+    device_commands.pop(device_id, None)
+
+    print(f"[DISCONNECT] {device_id} marked OFFLINE")
+
+    return jsonify({
+        "status": "SUCCESS",
+        "deviceId": device_id
+    }), 200
+
 
 
 # ===============================
 # COMMAND CHANNEL
 # ===============================
-
 @app.route("/reset", methods=["POST"])
 def reset_device():
     data = request.get_json(silent=True)
-    device_id = data.get("deviceId", "").strip() if data else ""
+    if not data:
+        return jsonify({"error": "Invalid JSON"}), 400
 
-    if not device_id:
-        return jsonify({"error": "deviceId required"}), 400
+    device_id = data.get("deviceId", "").strip()
+    user_id   = data.get("userId", "").strip()
 
+    if not device_id or not user_id:
+        return jsonify({"error": "deviceId and userId required"}), 400
+
+    # ==============================
+    # RTDB: mark device offline + reset
+    # ==============================
+    rtdb.reference(f"devices/{device_id}/status").update({
+        "isOnline": False,
+        "isReset": True
+    })
+
+    # ==============================
+    # Firestore: remove ownerId from device
+    # ==============================
+    device_ref = fs.collection("devices").document(device_id)
+    device_doc = device_ref.get()
+
+    if device_doc.exists:
+        device_ref.update({
+            "ownerId": firestore.DELETE_FIELD,
+            "status": "DISCONNECTED"
+        })
+
+    # ==============================
+    # Firestore: remove device from user.devices[]
+    # ==============================
+    user_ref = fs.collection("users").document(user_id)
+    user_doc = user_ref.get()
+
+    if user_doc.exists:
+        user_ref.update({
+            "devices": firestore.ArrayRemove([device_id])
+        })
+
+    # ==============================
+    # Queue RESET command
+    # ==============================
     device_commands[device_id] = "RESET"
-    print(f"[RESET] queued for {device_id}")
-    return jsonify({"status": "RESET queued"}), 200
+
+    # ==============================
+    # Clear in-memory state
+    # ==============================
+    devices.pop(device_id, None)
+
+    print(f"[RESET] {device_id} reset & ownership cleared")
+
+    return jsonify({
+        "status": "RESET_QUEUED",
+        "deviceId": device_id
+    }), 200
+
 
 
 @app.route("/command", methods=["GET"])
 def get_command():
     device_id = request.args.get("deviceId", "").strip()
+
+    # Check online status from RTDB
+    status = rtdb.reference(f"devices/{device_id}/status").get()
+    if not status or not status.get("isOnline"):
+        return "NO_COMMAND", 200
+
     cmd = device_commands.get(device_id, "NO_COMMAND")
 
     if cmd != "NO_COMMAND":
@@ -340,6 +410,7 @@ def get_command():
         print(f"[CMD SENT] {device_id} → {cmd}")
 
     return cmd, 200
+
 
 # ===============================
 # ADMIN CONTROL
