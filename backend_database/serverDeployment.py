@@ -376,18 +376,32 @@ def reset_device():
     if not device_id or not user_id:
         return jsonify({"error": "deviceId and userId required"}), 400
 
-    # 🔐 Validate ownership
+    # Validate ownership
     ok, error = validate_device_owner(device_id, user_id)
     if not ok:
         return jsonify(error[0]), error[1]
 
-    #  RTDB: offline + reset flag
+    # ==============================
+    # CHECK DEVICE ONLINE STATUS
+    # ==============================
+    status = rtdb.reference(f"devices/{device_id}/status").get()
+
+    if not status or not status.get("isOnline"):
+        return jsonify({
+            "error": "Device must be ONLINE to reset"
+        }), 409
+
+    # ==============================
+    # RTDB: mark reset intent
+    # ==============================
     rtdb.reference(f"devices/{device_id}/status").update({
         "isOnline": False,
         "isReset": True
     })
 
+    # ==============================
     # Firestore: remove ownership
+    # ==============================
     fs.collection("devices").document(device_id).update({
         "ownerId": firestore.DELETE_FIELD,
         "status": "DISCONNECTED"
@@ -397,21 +411,22 @@ def reset_device():
         "devices": firestore.ArrayRemove([device_id])
     })
 
-    # Queue RESET command
-    device_commands[device_id] = "RESET"
+    # ==============================
+    # DO NOT QUEUE RESET
+    # ==============================
+    device_commands.pop(device_id, None)
 
+    # ==============================
     # In-memory cleanup
+    # ==============================
     devices.pop(device_id, None)
 
-    print(f"[RESET] {device_id} by {user_id}")
+    print(f"[RESET] {device_id} reset by {user_id}")
 
     return jsonify({
-        "status": "RESET_QUEUED",
+        "status": "RESET_DONE",
         "deviceId": device_id
     }), 200
-
-
-
 
 @app.route("/command", methods=["GET"])
 def get_command():
