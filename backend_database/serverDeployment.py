@@ -342,17 +342,25 @@ def disconnect():
     if not device_id or not user_id:
         return jsonify({"error": "deviceId and userId required"}), 400
 
-    # 🔐 Validate ownership
+    # Validate ownership
     ok, error = validate_device_owner(device_id, user_id)
     if not ok:
         return jsonify(error[0]), error[1]
 
-    # 🔹 RTDB: mark offline
+    # CHECK DEVICE ONLINE STATUS
+    status = rtdb.reference(f"devices/{device_id}/status").get()
+
+    if not status or not status.get("isOnline"):
+        return jsonify({
+            "error": "Device must be ONLINE to reset"
+        }), 409
+    
+    # RTDB: mark offline
     rtdb.reference(f"devices/{device_id}/status").update({
         "isOnline": False
     })
 
-    # 🔹 In-memory cleanup
+    # In-memory cleanup
     devices.pop(device_id, None)
     device_commands.pop(device_id, None)
 
