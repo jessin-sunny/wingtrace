@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http; // Use http instead of google_generative_ai
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:http/http.dart' as http;
 import 'dart:convert';
 
 class PestChatbotScreen extends StatefulWidget {
@@ -11,73 +13,150 @@ class PestChatbotScreen extends StatefulWidget {
 
 class _PestChatbotScreenState extends State<PestChatbotScreen> {
   final TextEditingController _controller = TextEditingController();
-  final List<Map<String, String>> _messages = [
-    {"role": "bot", "text": "Hello! I am Tracy, your WingTrace Assistant. Ask me anything about pests, or select a quick question below."}
-  ];
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
   bool _isLoading = false;
 
   // --- CONFIGURATION ---
-  // Ensure you use your GROQ API KEY here
+  // Note: For production, use environment variables or a secure vault.
   static const String _apiKey = String.fromEnvironment('API_KEY');
   static const String _baseUrl = "https://api.groq.com/openai/v1/chat/completions";
+
+  // Save Messages to Firebase Firestore
+  Future<void> _saveToFirebase(String role, String text) async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) return;
+
+    await _firestore
+        .collection('users')
+        .doc(uid)
+        .collection('chats')
+        .add({
+      "role": role,
+      "text": text,
+      "timestamp": FieldValue.serverTimestamp(),
+    });
+  }
 
   // --- SEND LOGIC (GROQ COMPATIBLE) ---
   Future<void> _sendMessage(String text) async {
     if (text.trim().isEmpty) return;
 
-    setState(() {
-      _messages.add({"role": "user", "text": text});
-      _isLoading = true;
-    });
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) return;
+
     _controller.clear();
+    setState(() => _isLoading = true);
 
     try {
+      // 1. Save User Message immediately to local Firebase
+      await _saveToFirebase("user", text);
+
+      // 2. Fetch last 6 messages for GROQ memory context
+      final historySnap = await _firestore
+          .collection('users')
+          .doc(uid)
+          .collection('chats')
+          .orderBy('timestamp', descending: true)
+          .limit(6)
+          .get();
+
+      // Reverse so messages are in chronological order for the AI
+      final history = historySnap.docs.reversed.map((doc) => {
+        "role": doc['role'] == 'user' ? 'user' : 'assistant',
+        "content": doc['text']
+      }).toList();
+
       final response = await http.post(
         Uri.parse(_baseUrl),
         headers: {
-          'Authorization': 'Bearer $_apiKey', // Standard Groq Auth
+          'Authorization': 'Bearer $_apiKey',
           'Content-Type': 'application/json',
         },
         body: jsonEncode({
-          "model": "llama-3.1-8b-instant", // Your desired model
+          "model": "llama-3.1-8b-instant",
           "messages": [
-            {
-              "role": "system", 
-              "content": "You are Tracy, a pest control expert for the WingTrace app. "
-                         "Provide concise, scientific advice about pests."
-            },
-            ..._messages.map((m) => {
-              "role": m['role'] == 'user' ? 'user' : 'assistant',
-              "content": m['text']
-            }).toList(),
-            {"role": "user", "content": text}
+            {"role": "system", "content": "You are Tracy, a pest control expert for the WingTrace app."},
+            ...history
           ],
-          "temperature": 0.7,
         }),
       );
 
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        final botResponse = data['choices'][0]['message']['content']; // Parse response
-        
-        setState(() {
-          _messages.add({"role": "bot", "text": botResponse});
-        });
-      } else {
-        throw Exception("Failed to connect to Groq: ${response.statusCode}");
+        final botResponse = jsonDecode(response.body)['choices'][0]['message']['content'];
+        await _saveToFirebase("bot", botResponse);
       }
     } catch (e) {
-      setState(() {
-        _messages.add({"role": "bot", "text": "Error: Check your Groq API key or connection."});
-      });
+      debugPrint("Chat Error: $e");
     } finally {
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
+  Future<void> _deleteChatHistory() async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) return;
 
-  // --- UI REMAINS THE SAME ---
+    try {
+      // 1. Get all documents in the 'chats' sub-collection
+      final chatCollection = _firestore
+          .collection('users')
+          .doc(uid)
+          .collection('chats');
+      
+      final snapshots = await chatCollection.get();
+
+      // 2. Initialize a WriteBatch
+      WriteBatch batch = _firestore.batch();
+
+      // 3. Add each document's deletion to the batch
+      for (var doc in snapshots.docs) {
+        batch.delete(doc.reference);
+      }
+
+      // 4. Commit the batch
+      await batch.commit();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Chat history cleared.")),
+        );
+      }
+    } catch (e) {
+      debugPrint("Delete Error: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Failed to clear chat.")),
+        );
+      }
+    }
+  }
+  void _showDeleteConfirmation() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Clear Chat?"),
+        content: const Text("This will permanently delete all your messages with Tracy."),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("CANCEL"),
+          ),
+          TextButton(
+            onPressed: () {
+              _deleteChatHistory();
+              Navigator.pop(context);
+            },
+            child: const Text("DELETE", style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final uid = _auth.currentUser?.uid; // Fixed: uid must be defined in build
+
     return Scaffold(
       backgroundColor: const Color(0xFFFDFBE7),
       appBar: AppBar(
@@ -85,34 +164,46 @@ class _PestChatbotScreenState extends State<PestChatbotScreen> {
         backgroundColor: Colors.green,
         foregroundColor: Colors.white,
         elevation: 0,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.delete_sweep),
+            onPressed: () => _showDeleteConfirmation(),
+          ),
+        ],
       ),
       body: Column(
         children: [
           Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.all(15),
-              itemCount: _messages.length,
-              itemBuilder: (context, index) {
-                final msg = _messages[index];
-                bool isUser = msg['role'] == 'user';
-                return _buildChatBubble(msg['text']!, isUser);
-              },
-            ),
+            child: uid == null 
+              ? const Center(child: Text("Please login to chat."))
+              : StreamBuilder<QuerySnapshot>(
+                  stream: _firestore
+                      .collection('users')
+                      .doc(uid)
+                      .collection('chats')
+                      .orderBy('timestamp', descending: true)
+                      .snapshots(),
+                  builder: (context, snapshot) {
+                    if (snapshot.hasError) return const Center(child: Text("Something went wrong"));
+                    if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+                    
+                    final docs = snapshot.data!.docs;
+
+                    return ListView.builder(
+                      reverse: true, // Newer messages at the bottom
+                      padding: const EdgeInsets.all(15),
+                      itemCount: docs.length,
+                      itemBuilder: (context, index) {
+                        final data = docs[index].data() as Map<String, dynamic>;
+                        return _buildChatBubble(data['text'] ?? "", data['role'] == 'user');
+                      },
+                    );
+                  },
+                ),
           ),
-          if (_isLoading) 
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 20), 
-              child: LinearProgressIndicator(color: Colors.green, backgroundColor: Colors.transparent)
-            ),
-          SafeArea(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _buildQuickActions(),
-                _buildInputArea(),
-              ],
-            ),
-          ),
+          if (_isLoading) const LinearProgressIndicator(color: Colors.green, backgroundColor: Colors.transparent),
+          _buildQuickActions(), // Integrated correctly
+          _buildInputArea(),
         ],
       ),
     );
@@ -140,7 +231,7 @@ class _PestChatbotScreenState extends State<PestChatbotScreen> {
 
   Widget _buildQuickActions() {
     final questions = ["Prevent Aedes?", "Dengue symptoms?", "Best repellents?"];
-    return Container(
+    return SizedBox(
       height: 50,
       child: ListView(
         scrollDirection: Axis.horizontal,
@@ -160,23 +251,25 @@ class _PestChatbotScreenState extends State<PestChatbotScreen> {
     return Container(
       padding: const EdgeInsets.all(15),
       color: Colors.white,
-      child: Row(
-        children: [
-          Expanded(
-            child: TextField(
-              controller: _controller,
-              decoration: const InputDecoration(hintText: "Ask Tracy...", border: InputBorder.none),
-              onSubmitted: _sendMessage,
+      child: SafeArea(
+        child: Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _controller,
+                decoration: const InputDecoration(hintText: "Ask Tracy...", border: InputBorder.none),
+                onSubmitted: (val) => _sendMessage(val),
+              ),
             ),
-          ),
-          CircleAvatar(
-            backgroundColor: Colors.green,
-            child: IconButton(
-              icon: const Icon(Icons.send, color: Colors.white),
-              onPressed: () => _sendMessage(_controller.text),
+            CircleAvatar(
+              backgroundColor: Colors.green,
+              child: IconButton(
+                icon: const Icon(Icons.send, color: Colors.white),
+                onPressed: () => _sendMessage(_controller.text),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

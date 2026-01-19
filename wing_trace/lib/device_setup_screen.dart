@@ -159,7 +159,7 @@ class _DeviceSetupScreenState extends State<DeviceSetupScreen> {
       }
     });
 
-    Future.delayed(const Duration(minutes: 5), () {
+    Future.delayed(const Duration(minutes: 2), () {
       if (_isLoading && mounted) {
         _statusSubscription?.cancel();
         setState(() => _isLoading = false);
