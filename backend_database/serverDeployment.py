@@ -98,6 +98,7 @@ def alive():
     # Firebase update
     rtdb.reference(f"devices/{device_id}/status").update({
         "isOnline": True,
+        "isReset": False,
         "lastSeen": now,
         "batteryLevel": battery_level,
         "networkStrength": signal_quality
@@ -293,6 +294,11 @@ def onBoard_device():
     print(f"[ONBOARD] {device_id} → {owner_id}")
 
     device_commands.pop(device_id, None)  # clear stale commands
+
+    rtdb.reference(f"devices/{device_id}/status").update({
+        "isOnline": True,
+        "isReset": False
+    })
 
     return jsonify({
         "status": "SUCCESS",
