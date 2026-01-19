@@ -6,7 +6,7 @@ class AuthService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
 
   // 1. Sign Up (Create Account & Store in Database)
-  Future<String?> signUp(String email, String password, String name, String role) async {
+  Future<String?> signUp(String email, String password, Map<String, dynamic> userData) async {
     try {
       UserCredential result = await _auth.createUserWithEmailAndPassword(
         email: email, 
@@ -14,23 +14,31 @@ class AuthService {
       );
       
       User? user = result.user;
-
-      // Save user details + role to Firestore
-      await _db.collection('users').doc(user!.uid).set({
-        'uid': user.uid,
-        'email': email,
-        'name': name,
-        'role': role, // <--- This saves 'farmer' or 'officer'
-        'created_at': FieldValue.serverTimestamp(),
-        'owned_devices': [],
-        'hasCompletedSetup': false
-      });
-
+      if (user != null) {
+        // Save the custom Map provided by the UI to Firestore
+        await _db.collection('users').doc(user.uid).set(userData);
+      }
       return null; // Success
     } on FirebaseAuthException catch (e) {
       return e.message;
     }
   }
+      // Save user details + role to Firestore
+  //     await _db.collection('users').doc(user!.uid).set({
+  //       'uid': user.uid,
+  //       'email': email,
+  //       'name': name,
+  //       'role': role, // <--- This saves 'farmer' or 'officer'
+  //       'created_at': FieldValue.serverTimestamp(),
+  //       'owned_devices': [],
+  //       'hasCompletedSetup': false
+  //     });
+
+  //     return null; // Success
+  //   } on FirebaseAuthException catch (e) {
+  //     return e.message;
+  //   }
+  // }
 
   // 2. Sign In
   Future<String?> signIn(String email, String password) async {
