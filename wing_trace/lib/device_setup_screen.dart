@@ -88,7 +88,7 @@ class _DeviceSetupScreenState extends State<DeviceSetupScreen> {
         Uri.parse("$serverUrl/startSetup"),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({"userId": userId}),
-      ).timeout(const Duration(seconds: 10));
+      ).timeout(const Duration(seconds: 30));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -159,7 +159,7 @@ class _DeviceSetupScreenState extends State<DeviceSetupScreen> {
       }
     });
 
-    Future.delayed(const Duration(minutes: 2), () {
+    Future.delayed(const Duration(minutes: 5), () {
       if (_isLoading && mounted) {
         _statusSubscription?.cancel();
         setState(() => _isLoading = false);
