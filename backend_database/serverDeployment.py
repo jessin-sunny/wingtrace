@@ -245,7 +245,7 @@ def onBoard_device():
     if not device_id or not owner_id or not setupToken:
         return jsonify({"error": "Missing fields"}), 400
 
-    # 🔹 Validate setup token
+    # Validate setup token
     token_ref = fs.collection("setupSessions").document(setupToken)
     token_doc = token_ref.get()
 
@@ -263,7 +263,7 @@ def onBoard_device():
     if token_data["ownerId"] != owner_id:
         return jsonify({"error": "Token-owner mismatch"}), 403
 
-    # 🔹 Validate device
+    # Validate device
     device_ref = fs.collection("devices").document(device_id)
     device_doc = device_ref.get()
 
@@ -273,18 +273,18 @@ def onBoard_device():
     if device_doc.to_dict().get("ownerId"):
         return jsonify({"error": "Device already owned"}), 403
 
-    # 🔹 Assign ownership
+    # Assign ownership
     device_ref.set({
         "ownerId": owner_id,
         "status": "CONNECTED"
     }, merge=True)
 
-    # 🔹 Update user
+    # Update user
     fs.collection("users").document(owner_id).set({
         "devices": firestore.ArrayUnion([device_id])
     }, merge=True)
 
-    # 🔹 Mark token as USED
+    # Mark token as USED
     token_ref.update({
         "status": "USED",
         "deviceId": device_id
@@ -299,28 +299,58 @@ def onBoard_device():
         "deviceId": device_id
     }), 200
 
+# vaild ownership checking
+def validate_device_owner(device_id: str, user_id: str):
+    """
+    Returns (True, None) if valid
+    Returns (False, (json, status_code)) if invalid
+    """
+
+    # Check user exists
+    user_ref = fs.collection("users").document(user_id)
+    user_doc = user_ref.get()
+    if not user_doc.exists:
+        return False, ({"error": "User not found"}, 404)
+
+    # Check device exists
+    device_ref = fs.collection("devices").document(device_id)
+    device_doc = device_ref.get()
+    if not device_doc.exists:
+        return False, ({"error": "Device not found"}, 404)
+
+    device_data = device_doc.to_dict()
+
+    # Check ownership
+    owner_id = device_data.get("ownerId")
+    if owner_id != user_id:
+        return False, ({"error": "User does not own this device"}, 403)
+
+    return True, None
 
 @app.route('/disconnect', methods=['POST'])
 def disconnect():
     data = request.get_json(silent=True)
     device_id = data.get("deviceId", "").strip() if data else ""
+    user_id   = data.get("userId", "").strip() if data else ""
 
-    if not device_id:
-        return jsonify({"error": "deviceId required"}), 400
+    if not device_id or not user_id:
+        return jsonify({"error": "deviceId and userId required"}), 400
 
-    # 🔹 Update RTDB status
+    # 🔐 Validate ownership
+    ok, error = validate_device_owner(device_id, user_id)
+    if not ok:
+        return jsonify(error[0]), error[1]
+
+    # 🔹 RTDB: mark offline
     rtdb.reference(f"devices/{device_id}/status").update({
         "isOnline": False
     })
 
-    # 🔹 Update in-memory state (best-effort)
-    if device_id in devices:
-        devices[device_id]["isOnline"] = False
-
-    # 🔹 Clear pending commands (important)
+    # 🔹 In-memory cleanup
+    devices.pop(device_id, None)
     device_commands.pop(device_id, None)
 
-    print(f"[DISCONNECT] {device_id} marked OFFLINE")
+    print(f"[DISCONNECT] {device_id} by {user_id}")
 
     return jsonify({
         "status": "SUCCESS",
@@ -329,9 +359,11 @@ def disconnect():
 
 
 
+
 # ===============================
 # COMMAND CHANNEL
 # ===============================
+# Reset device
 @app.route("/reset", methods=["POST"])
 def reset_device():
     data = request.get_json(silent=True)
@@ -344,53 +376,40 @@ def reset_device():
     if not device_id or not user_id:
         return jsonify({"error": "deviceId and userId required"}), 400
 
-    # ==============================
-    # RTDB: mark device offline + reset
-    # ==============================
+    # 🔐 Validate ownership
+    ok, error = validate_device_owner(device_id, user_id)
+    if not ok:
+        return jsonify(error[0]), error[1]
+
+    #  RTDB: offline + reset flag
     rtdb.reference(f"devices/{device_id}/status").update({
         "isOnline": False,
         "isReset": True
     })
 
-    # ==============================
-    # Firestore: remove ownerId from device
-    # ==============================
-    device_ref = fs.collection("devices").document(device_id)
-    device_doc = device_ref.get()
+    # Firestore: remove ownership
+    fs.collection("devices").document(device_id).update({
+        "ownerId": firestore.DELETE_FIELD,
+        "status": "DISCONNECTED"
+    })
 
-    if device_doc.exists:
-        device_ref.update({
-            "ownerId": firestore.DELETE_FIELD,
-            "status": "DISCONNECTED"
-        })
+    fs.collection("users").document(user_id).update({
+        "devices": firestore.ArrayRemove([device_id])
+    })
 
-    # ==============================
-    # Firestore: remove device from user.devices[]
-    # ==============================
-    user_ref = fs.collection("users").document(user_id)
-    user_doc = user_ref.get()
-
-    if user_doc.exists:
-        user_ref.update({
-            "devices": firestore.ArrayRemove([device_id])
-        })
-
-    # ==============================
     # Queue RESET command
-    # ==============================
     device_commands[device_id] = "RESET"
 
-    # ==============================
-    # Clear in-memory state
-    # ==============================
+    # In-memory cleanup
     devices.pop(device_id, None)
 
-    print(f"[RESET] {device_id} reset & ownership cleared")
+    print(f"[RESET] {device_id} by {user_id}")
 
     return jsonify({
         "status": "RESET_QUEUED",
         "deviceId": device_id
     }), 200
+
 
 
 
