@@ -2,8 +2,10 @@ import 'dart:math'; // Required for Random()
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart'; 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:convert'; 
 import 'dart:async';
 import 'package:animated_text_kit/animated_text_kit.dart'; 
+import 'package:http/http.dart' as http;
 
 import 'detection_screen.dart'; 
 import 'history_screen.dart';
@@ -73,14 +75,50 @@ class _UserDashboardState extends State<UserDashboard> {
       'profile_pic': randomPic,
     });
   }
-
-  void _handleConnectTap(bool hasSetup) {
+  Future<void> _handleConnectTap(bool hasSetup) async {
     if (!hasSetup) {
       Navigator.push(context, MaterialPageRoute(builder: (_) => const DeviceSetupScreen()));
+      return;
+    }
+
+    if (_isLive) {
+      // Show Disconnect Dialog
+      bool? confirm = await showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text("Disconnect Device?"),
+          content: const Text("This will stop live monitoring until the device reboots."),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("CANCEL")),
+            TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("DISCONNECT", style: TextStyle(color: Colors.red))),
+          ],
+        ),
+      );
+
+      if (confirm == true) {
+        final user = FirebaseAuth.instance.currentUser;
+        // Call your colleague's endpoint
+        final resp = await http.post(
+          Uri.parse("https://wingtrace-production.up.railway.app/disconnect"),
+          headers: {"Content-Type": "application/json"},
+          body: jsonEncode({"deviceId": "WT12345678", "userId": user?.uid}),
+        );
+        if (resp.statusCode == 200) {
+          setState(() => _isLive = false);
+        }
+      }
     } else {
       _showConnectionDialog();
     }
   }
+
+  // void _handleConnectTap(bool hasSetup) {
+  //   if (!hasSetup) {
+  //     Navigator.push(context, MaterialPageRoute(builder: (_) => const DeviceSetupScreen()));
+  //   } else {
+  //     _showConnectionDialog();
+  //   }
+  // }
 
   void _showConnectionDialog() {
     showDialog(
