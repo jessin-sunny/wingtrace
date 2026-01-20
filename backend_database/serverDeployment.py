@@ -277,7 +277,7 @@ def onBoard_device():
     # Assign ownership
     device_ref.set({
         "ownerId": owner_id,
-        "status": "CONNECTED"
+        "status": "DISCONNECTED"
     }, merge=True)
 
     # Update user
@@ -333,6 +333,39 @@ def validate_device_owner(device_id: str, user_id: str):
 
     return True, None
 
+@app.route("/connect", methods=["POST"])
+def connect_device():
+    data = request.get_json(silent=True)
+    device_id = data.get("deviceId", "").strip()
+    user_id   = data.get("userId", "").strip()
+
+    if not device_id or not user_id:
+        return jsonify({"error": "deviceId and userId required"}), 400
+
+    # Ownership validation
+    ok, error = validate_device_owner(device_id, user_id)
+    if not ok:
+        return jsonify(error[0]), error[1]
+
+    # MUST be online
+    status = rtdb.reference(f"devices/{device_id}/status").get()
+    if not status or not status.get("isOnline"):
+        return jsonify({
+            "error": "Device must be ONLINE to connect"
+        }), 409
+
+    # Mark connected (user intent)
+    fs.collection("devices").document(device_id).update({
+        "status": "CONNECTED"
+    })
+
+    print(f"[CONNECT] {device_id}")
+
+    return jsonify({
+        "status": "CONNECTED",
+        "deviceId": device_id
+    }), 200
+
 @app.route('/disconnect', methods=['POST'])
 def disconnect():
     data = request.get_json(silent=True)
@@ -360,6 +393,10 @@ def disconnect():
         "isOnline": False
     })
 
+    fs.collection("devices").document(device_id).update({
+    "status": "DISCONNECTED"
+    })
+
     # In-memory cleanup
     devices.pop(device_id, None)
     device_commands.pop(device_id, None)
@@ -374,7 +411,7 @@ def disconnect():
 # ===============================
 # COMMAND CHANNEL
 # ===============================
-# Reset device
+# Fcatory Reset device
 @app.route("/reset", methods=["POST"])
 def reset_device():
     data = request.get_json(silent=True)
@@ -412,9 +449,17 @@ def reset_device():
 def get_command():
     device_id = request.args.get("deviceId", "").strip()
 
+    device_doc = fs.collection("devices").document(device_id).get()
+    if not device_doc.exists:
+        return "NO_COMMAND", 200
+
+    if device_doc.to_dict().get("status") != "CONNECTED":
+        return "NO_COMMAND", 200
+    
     status = rtdb.reference(f"devices/{device_id}/status").get()
     if not status or not status.get("isOnline"):
         return "NO_COMMAND", 200
+
 
     cmd_obj = device_commands.pop(device_id, None)
     if not cmd_obj:
