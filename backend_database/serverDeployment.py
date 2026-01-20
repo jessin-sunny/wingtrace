@@ -336,6 +336,9 @@ def validate_device_owner(device_id: str, user_id: str):
 @app.route("/connect", methods=["POST"])
 def connect_device():
     data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "Invalid JSON"}), 400
+    
     device_id = data.get("deviceId", "").strip()
     user_id   = data.get("userId", "").strip()
 
@@ -387,11 +390,6 @@ def disconnect():
         return jsonify({
             "error": "Device must be ONLINE to disconnect"
         }), 409
-    
-    # RTDB: mark offline
-    rtdb.reference(f"devices/{device_id}/status").update({
-        "isOnline": False
-    })
 
     fs.collection("devices").document(device_id).update({
     "status": "DISCONNECTED"
