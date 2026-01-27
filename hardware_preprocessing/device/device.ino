@@ -63,9 +63,8 @@ const unsigned long ALIVE_INTERVAL   = 300000; // 5 min
 const unsigned long COMMAND_INTERVAL = 5000;  // 5 second
 
 int16_t audioBuffer[BUFFER_LEN];
+QueueHandle_t audioQueue;
 bool isRecording = false;
-// audio task handle
-TaskHandle_t audioTaskHandle = NULL;
 // audio socket state
 volatile bool audioSocketConnected = false;
 
@@ -104,6 +103,7 @@ void audioSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
     case WStype_CONNECTED:
       Serial.println("Audio socket connected");
       audioSocketConnected = true;
+      audioSocket.sendTXT(DEVICE_ID);
       break;
 
     case WStype_DISCONNECTED:
@@ -118,27 +118,6 @@ void audioSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
 
     default:
       break;
-  }
-}
-
-void audioTask(void *parameter) {
-  size_t bytesRead;
-
-  while (true) {
-    if (isRecording && audioSocketConnected && WiFi.status() == WL_CONNECTED) {
-      i2s_read(
-        I2S_NUM_0,
-        audioBuffer,
-        sizeof(audioBuffer),
-        &bytesRead,
-        portMAX_DELAY
-      );
-
-      // send raw PCM as binary frame
-      audioSocket.sendBIN((uint8_t *)audioBuffer, bytesRead);
-    } else {
-      vTaskDelay(10 / portTICK_PERIOD_MS);
-    }
   }
 }
 
@@ -257,7 +236,7 @@ void startNormalMode() {
   audioSocket.beginSSL(
     "wingtrace-production.up.railway.app", // host
     443,
-    "/startAudioStream?deviceId=WT12345678"                              // websocket path
+    "/startAudioStream"                              // websocket path
   );
 
   audioSocket.onEvent(audioSocketEvent);
@@ -266,15 +245,6 @@ void startNormalMode() {
   prefs.remove("setupToken");
   sendAlive();
   lastAlive = millis();
-  xTaskCreatePinnedToCore(
-    audioTask,
-    "AudioTask",
-    8192,
-    NULL,
-    2,          // HIGH priority
-    &audioTaskHandle,
-    0           // Core 0
-  );
 }
 
 // ------------------
@@ -425,6 +395,7 @@ void setup() {
   prefs.end();
   
   if (hasSSID) {
+    audioQueue = xQueueCreate(4, sizeof(audioBuffer));
     startNormalMode();
     
   } else {
@@ -456,5 +427,31 @@ void loop() {
   }
 
   audioSocket.loop();
+
+  // ===== AUDIO STREAMING (SAFE) =====
+  static size_t bytesRead = 0;
+
+  if (isRecording) {
+    i2s_read(
+      I2S_NUM_0,
+      audioBuffer,
+      sizeof(audioBuffer),
+      &bytesRead,
+      0   // NON-BLOCKING
+    );
+
+    if (bytesRead > 0) {
+      xQueueSend(audioQueue, audioBuffer, 0);
+    }
+  }
+  // send audio from queue to ws
+  if (isRecording && audioSocketConnected) {
+  int16_t tempBuf[BUFFER_LEN];
+  if (xQueueReceive(audioQueue, tempBuf, 0) == pdTRUE) {
+    audioSocket.sendBIN((uint8_t*)tempBuf, sizeof(tempBuf));
+  }
+}
+
+
 }
 
