@@ -625,20 +625,21 @@ def upload_to_supabase(filepath, filename):
     with open(filepath, "rb") as f:
         data = f.read()
 
-    path = f"{filename}"
+    bucket = supabase.storage.from_("audio-recordings")
 
-    res = supabase.storage.from_("audio-recordings").upload(
-        path,
+    # Upload
+    res = bucket.upload(
+        filename,
         data,
-        {
-            "content-type": "audio/wav"
-        }
+        file_options={"content-type": "audio/wav"}
     )
 
-    if res.get("error"):
-        raise Exception(res["error"]["message"])
+    # If upload failed, SDK throws OR returns error attribute
+    if hasattr(res, "error") and res.error:
+        raise Exception(res.error)
 
-    public_url = supabase.storage.from_("audio-recordings").get_public_url(path)
+    # Get public URL
+    public_url = bucket.get_public_url(filename)
 
     return public_url
 
