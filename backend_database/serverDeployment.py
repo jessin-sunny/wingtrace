@@ -658,6 +658,10 @@ def flush_audio(device_id, force=False):
     with audio_locks[device_id]:
         if not audio_buffers[device_id]:
             return
+        if not force:
+            # only flush when chunk duration reached
+            if time.time() - last_flush_time[device_id] < CHUNK_SECONDS:
+                return
 
         raw_audio = bytes(audio_buffers[device_id])
         audio_buffers[device_id].clear()
@@ -689,10 +693,12 @@ def audio_stream(ws):
     device_id = None
 
     try:
-        device_id = request.args.get("deviceId")
+        # FIRST MESSAGE: deviceId (text)
+        device_id = ws.receive()
         if not device_id:
             ws.close()
             return
+
         print(f"[AUDIO CONNECT] {device_id}")
 
         # Init per-device buffers
@@ -716,9 +722,12 @@ def audio_stream(ws):
 
     finally:
         print(f"[AUDIO DISCONNECT] {device_id}")
-        if device_id and device_id in audio_locks:
+        if (
+            device_id
+            and device_id in audio_locks
+            and device_id in audio_buffers
+        ):
             flush_audio(device_id, force=True)
-
 
 
 
