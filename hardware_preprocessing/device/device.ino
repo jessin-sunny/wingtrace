@@ -257,7 +257,7 @@ void startNormalMode() {
   audioSocket.beginSSL(
     "wingtrace-production.up.railway.app", // host
     443,
-    "/startAudio"                               // websocket path
+    "/startAudioStream?deviceId=WT12345678"                              // websocket path
   );
 
   audioSocket.onEvent(audioSocketEvent);
