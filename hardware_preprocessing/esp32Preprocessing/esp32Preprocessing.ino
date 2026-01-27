@@ -58,6 +58,13 @@ void loop() {
   // -------- AUDIO --------
   i2s_read(I2S_NUM_0, buffer, sizeof(buffer), &bytes_read, portMAX_DELAY);
   Serial.write((uint8_t*)buffer, bytes_read);
+
+  //int samples = bytes_read / sizeof(int16_t);
+  //for (int i = 0; i < samples; i++) {
+  //Serial.println(buffer[i]);   // one sample per line
+  //}
+
+ 
   /*
   // -------- DHT11 (every 2 sec) --------
   if (millis() - lastDHTRead > 2000) {
