@@ -675,6 +675,7 @@ def store_audio_metadata(device_id, audio_url):
     recordings.append(entry)
 
     ref.set({
+        "isRecording": True,
         "recentRecordings": recordings
     })
 
