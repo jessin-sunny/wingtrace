@@ -16,32 +16,48 @@ class _PestChatbotScreenState extends State<PestChatbotScreen> {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   bool _isLoading = false;
+  String? _userProfilePic; // 🔹 Added to store user image path
 
-  // --- CONFIGURATION ---
-  // Note: For production, use environment variables or a secure vault.
   static const String _apiKey = String.fromEnvironment('API_KEY');
   static const String _baseUrl = "https://api.groq.com/openai/v1/chat/completions";
 
-  // Save Messages to Firebase Firestore
+  @override
+  void initState() {
+    super.initState();
+    _fetchUserAvatar(); // 🔹 Fetch the profile pic on startup
+  }
+
+  // 🔹 Logic to fetch the real profile pic path from Firestore
+  Future<void> _fetchUserAvatar() async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) return;
+
+    try {
+      final userDoc = await _firestore.collection('users').doc(uid).get();
+      if (userDoc.exists) {
+        setState(() {
+          // Matches your new DB field "profilePic"
+          _userProfilePic = userDoc.data()?['profile_pic']; 
+        });
+      }
+    } catch (e) {
+      debugPrint("Error fetching avatar: $e");
+    }
+  }
+
   Future<void> _saveToFirebase(String role, String text) async {
     final uid = _auth.currentUser?.uid;
     if (uid == null) return;
 
-    await _firestore
-        .collection('users')
-        .doc(uid)
-        .collection('chats')
-        .add({
+    await _firestore.collection('users').doc(uid).collection('chats').add({
       "role": role,
       "text": text,
       "timestamp": FieldValue.serverTimestamp(),
     });
   }
 
-  // --- SEND LOGIC (GROQ COMPATIBLE) ---
   Future<void> _sendMessage(String text) async {
     if (text.trim().isEmpty) return;
-
     final uid = _auth.currentUser?.uid;
     if (uid == null) return;
 
@@ -49,10 +65,7 @@ class _PestChatbotScreenState extends State<PestChatbotScreen> {
     setState(() => _isLoading = true);
 
     try {
-      // 1. Save User Message immediately to local Firebase
       await _saveToFirebase("user", text);
-
-      // 2. Fetch last 6 messages for GROQ memory context
       final historySnap = await _firestore
           .collection('users')
           .doc(uid)
@@ -61,7 +74,6 @@ class _PestChatbotScreenState extends State<PestChatbotScreen> {
           .limit(6)
           .get();
 
-      // Reverse so messages are in chronological order for the AI
       final history = historySnap.docs.reversed.map((doc) => {
         "role": doc['role'] == 'user' ? 'user' : 'assistant',
         "content": doc['text']
@@ -76,7 +88,7 @@ class _PestChatbotScreenState extends State<PestChatbotScreen> {
         body: jsonEncode({
           "model": "llama-3.1-8b-instant",
           "messages": [
-            {"role": "system", "content": "You are Tracy, a pest control expert for the WingTrace app."},
+            {"role": "system", "content": "You are Tracy, a friendly pest expert for WingTrace."},
             ...history
           ],
         }),
@@ -92,81 +104,44 @@ class _PestChatbotScreenState extends State<PestChatbotScreen> {
       if (mounted) setState(() => _isLoading = false);
     }
   }
+
   Future<void> _deleteChatHistory() async {
     final uid = _auth.currentUser?.uid;
     if (uid == null) return;
-
     try {
-      // 1. Get all documents in the 'chats' sub-collection
-      final chatCollection = _firestore
-          .collection('users')
-          .doc(uid)
-          .collection('chats');
-      
+      final chatCollection = _firestore.collection('users').doc(uid).collection('chats');
       final snapshots = await chatCollection.get();
-
-      // 2. Initialize a WriteBatch
       WriteBatch batch = _firestore.batch();
-
-      // 3. Add each document's deletion to the batch
       for (var doc in snapshots.docs) {
         batch.delete(doc.reference);
       }
-
-      // 4. Commit the batch
       await batch.commit();
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Chat history cleared.")),
-        );
-      }
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Memory cleared!")));
     } catch (e) {
       debugPrint("Delete Error: $e");
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Failed to clear chat.")),
-        );
-      }
     }
-  }
-  void _showDeleteConfirmation() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("Clear Chat?"),
-        content: const Text("This will permanently delete all your messages with Tracy."),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("CANCEL"),
-          ),
-          TextButton(
-            onPressed: () {
-              _deleteChatHistory();
-              Navigator.pop(context);
-            },
-            child: const Text("DELETE", style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
-    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final uid = _auth.currentUser?.uid; // Fixed: uid must be defined in build
+    final uid = _auth.currentUser?.uid;
 
     return Scaffold(
       backgroundColor: const Color(0xFFFDFBE7),
       appBar: AppBar(
-        title: const Text("TRACY - Assistant"),
-        backgroundColor: Colors.green,
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text("Tracy", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20)),
+            Text("AI Pest Assistant", style: TextStyle(fontSize: 12, color: Colors.white.withOpacity(0.8))),
+          ],
+        ),
+        backgroundColor: Colors.green[700],
         foregroundColor: Colors.white,
-        elevation: 0,
+        elevation: 4,
         actions: [
           IconButton(
-            icon: const Icon(Icons.delete_sweep),
+            icon: const Icon(Icons.delete_sweep_rounded),
             onPressed: () => _showDeleteConfirmation(),
           ),
         ],
@@ -175,7 +150,7 @@ class _PestChatbotScreenState extends State<PestChatbotScreen> {
         children: [
           Expanded(
             child: uid == null 
-              ? const Center(child: Text("Please login to chat."))
+              ? const Center(child: Text("Login to chat with Tracy"))
               : StreamBuilder<QuerySnapshot>(
                   stream: _firestore
                       .collection('users')
@@ -184,14 +159,11 @@ class _PestChatbotScreenState extends State<PestChatbotScreen> {
                       .orderBy('timestamp', descending: true)
                       .snapshots(),
                   builder: (context, snapshot) {
-                    if (snapshot.hasError) return const Center(child: Text("Something went wrong"));
-                    if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-                    
+                    if (!snapshot.hasData) return const Center(child: CircularProgressIndicator(color: Colors.green));
                     final docs = snapshot.data!.docs;
-
                     return ListView.builder(
-                      reverse: true, // Newer messages at the bottom
-                      padding: const EdgeInsets.all(15),
+                      reverse: true,
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
                       itemCount: docs.length,
                       itemBuilder: (context, index) {
                         final data = docs[index].data() as Map<String, dynamic>;
@@ -201,8 +173,12 @@ class _PestChatbotScreenState extends State<PestChatbotScreen> {
                   },
                 ),
           ),
-          if (_isLoading) const LinearProgressIndicator(color: Colors.green, backgroundColor: Colors.transparent),
-          _buildQuickActions(), // Integrated correctly
+          if (_isLoading) 
+            const Padding(
+              padding: EdgeInsets.only(bottom: 10),
+              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.green),
+            ),
+          _buildQuickActions(),
           _buildInputArea(),
         ],
       ),
@@ -210,36 +186,79 @@ class _PestChatbotScreenState extends State<PestChatbotScreen> {
   }
 
   Widget _buildChatBubble(String text, bool isUser) {
-    return Align(
-      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 8),
-        padding: const EdgeInsets.all(14),
-        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
-        decoration: BoxDecoration(
-          color: isUser ? Colors.green : Colors.white,
-          borderRadius: BorderRadius.circular(20).copyWith(
-            bottomRight: isUser ? const Radius.circular(0) : const Radius.circular(20),
-            bottomLeft: isUser ? const Radius.circular(20) : const Radius.circular(0),
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6.0),
+      child: Row(
+        mainAxisAlignment: isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          if (!isUser) 
+            const CircleAvatar(
+              radius: 14, 
+              backgroundColor: Colors.green, 
+              child: Icon(Icons.smart_toy_rounded, size: 16, color: Colors.white)
+            ),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                color: isUser ? Colors.green[600] : Colors.white,
+                borderRadius: BorderRadius.only(
+                  topLeft: const Radius.circular(20),
+                  topRight: const Radius.circular(20),
+                  bottomLeft: Radius.circular(isUser ? 20 : 4),
+                  bottomRight: Radius.circular(isUser ? 4 : 20),
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.05),
+                    blurRadius: 8,
+                    offset: const Offset(0, 4),
+                  )
+                ],
+              ),
+              child: Text(
+                text,
+                style: TextStyle(
+                  color: isUser ? Colors.white : Colors.black87,
+                  fontSize: 15,
+                  height: 1.4,
+                ),
+              ),
+            ),
           ),
-          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 5)],
-        ),
-        child: Text(text, style: TextStyle(color: isUser ? Colors.white : Colors.black87)),
+          const SizedBox(width: 8),
+          if (isUser) 
+            CircleAvatar(
+              radius: 14, 
+              backgroundColor: Colors.grey[300], 
+              // 🔹 Logic: Use the fetched asset image or a default icon
+              backgroundImage: (_userProfilePic != null && _userProfilePic!.isNotEmpty) 
+                  ? AssetImage(_userProfilePic!) 
+                  : null,
+              child: (_userProfilePic == null || _userProfilePic!.isEmpty) 
+                  ? const Icon(Icons.person, size: 16, color: Colors.black54) 
+                  : null,
+            ),
+        ],
       ),
     );
   }
 
   Widget _buildQuickActions() {
-    final questions = ["Prevent Aedes?", "Dengue symptoms?", "Best repellents?"];
+    final questions = ["Aedes Prevention?", "Dengue Symptoms?", "Repellents?"];
     return SizedBox(
-      height: 50,
+      height: 45,
       child: ListView(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 16),
         children: questions.map((q) => Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4),
+          padding: const EdgeInsets.only(right: 8),
           child: ActionChip(
-            label: Text(q, style: const TextStyle(fontSize: 12, color: Colors.green)),
+            backgroundColor: Colors.white,
+            side: const BorderSide(color: Colors.green),
+            label: Text(q, style: const TextStyle(fontSize: 12, color: Colors.green, fontWeight: FontWeight.bold)),
             onPressed: () => _sendMessage(q),
           ),
         )).toList(),
@@ -249,27 +268,61 @@ class _PestChatbotScreenState extends State<PestChatbotScreen> {
 
   Widget _buildInputArea() {
     return Container(
-      padding: const EdgeInsets.all(15),
-      color: Colors.white,
-      child: SafeArea(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 30),
+      decoration: const BoxDecoration(color: Colors.transparent),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(30),
+          boxShadow: [
+            BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 10, offset: const Offset(0, -2))
+          ],
+        ),
         child: Row(
           children: [
             Expanded(
-              child: TextField(
-                controller: _controller,
-                decoration: const InputDecoration(hintText: "Ask Tracy...", border: InputBorder.none),
-                onSubmitted: (val) => _sendMessage(val),
+              child: Padding(
+                padding: const EdgeInsets.only(left: 15),
+                child: TextField(
+                  controller: _controller,
+                  decoration: const InputDecoration(
+                    hintText: "Type a message...",
+                    border: InputBorder.none,
+                  ),
+                  onSubmitted: (val) => _sendMessage(val),
+                ),
               ),
             ),
-            CircleAvatar(
-              backgroundColor: Colors.green,
-              child: IconButton(
-                icon: const Icon(Icons.send, color: Colors.white),
-                onPressed: () => _sendMessage(_controller.text),
+            GestureDetector(
+              onTap: () => _sendMessage(_controller.text),
+              child: CircleAvatar(
+                radius: 20,
+                backgroundColor: Colors.green[700],
+                child: const Icon(Icons.send_rounded, color: Colors.white, size: 18),
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  void _showDeleteConfirmation() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text("Reset Conversation?"),
+        content: const Text("This will permanently wipe Tracy's memory of this chat."),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Keep it")),
+          ElevatedButton(
+            onPressed: () { _deleteChatHistory(); Navigator.pop(context); },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            child: const Text("Clear"),
+          ),
+        ],
       ),
     );
   }
