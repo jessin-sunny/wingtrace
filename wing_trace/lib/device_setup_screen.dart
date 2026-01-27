@@ -62,7 +62,7 @@ class _DeviceSetupScreenState extends State<DeviceSetupScreen> {
 
     if (statuses[Permission.locationWhenInUse]!.isGranted) {
       String? wifiName = await _networkInfo.getWifiName();
-      String cleanSsid = wifiName.replaceAll('"', '') ?? "";
+      String cleanSsid = wifiName?.replaceAll('"', '') ?? "";
 
       // 🔹 STRICT VERIFICATION: Ensure we are actually on WingTrace
       if (cleanSsid.toLowerCase().startsWith("wingtrace")) {
