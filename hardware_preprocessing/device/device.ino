@@ -3,6 +3,7 @@
 #include <Preferences.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>   // for https [security]
+#include <WebSocketsClient.h>   // for audio continuous data
 #include "DHT.h"
 #include <driver/i2s.h>
 #include <ArduinoJson.h>
@@ -19,6 +20,8 @@
 
 DHT dht(DHTPIN, DHTTYPE);
 WiFiClientSecure secureClient;
+WebSocketsClient audioSocket;
+
 
 // ------------------
 // CONSTANTS
@@ -61,8 +64,14 @@ const unsigned long COMMAND_INTERVAL = 5000;  // 5 second
 
 int16_t audioBuffer[BUFFER_LEN];
 bool isRecording = false;
+// audio task handle
+TaskHandle_t audioTaskHandle = NULL;
+// audio socket state
+volatile bool audioSocketConnected = false;
 
+// -------------
 // audio part
+// -------------
 void initI2S() {
   i2s_config_t cfg = {
     .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
@@ -90,25 +99,48 @@ void initI2S() {
   Serial.println("I2S initialized");
 }
 
-void sendAudioChunk() {
-  if (!isRecording || WiFi.status() != WL_CONNECTED) return;
+void audioSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
+  switch (type) {
+    case WStype_CONNECTED:
+      Serial.println("Audio socket connected");
+      audioSocketConnected = true;
+      break;
 
-  size_t bytesRead;
-  i2s_read(I2S_NUM_0, audioBuffer, sizeof(audioBuffer),
-           &bytesRead, portMAX_DELAY);
+    case WStype_DISCONNECTED:
+      Serial.println("Audio socket disconnected");
+      audioSocketConnected = false;
+      break;
 
-  HTTPClient http;
-  http.begin(secureClient, String(SERVER_BASE) + "/audio");
-  http.addHeader("Content-Type", "application/octet-stream");
+    case WStype_ERROR:
+      Serial.println("Audio socket error");
+      audioSocketConnected = false;
+      break;
 
-  int code = http.POST((uint8_t*)audioBuffer, bytesRead);
-  if (code < 0) {
-    Serial.println("Audio send failed");
+    default:
+      break;
   }
-
-  http.end();
 }
 
+void audioTask(void *parameter) {
+  size_t bytesRead;
+
+  while (true) {
+    if (isRecording && audioSocketConnected && WiFi.status() == WL_CONNECTED) {
+      i2s_read(
+        I2S_NUM_0,
+        audioBuffer,
+        sizeof(audioBuffer),
+        &bytesRead,
+        portMAX_DELAY
+      );
+
+      // send raw PCM as binary frame
+      audioSocket.sendBIN((uint8_t *)audioBuffer, bytesRead);
+    } else {
+      vTaskDelay(10 / portTICK_PERIOD_MS);
+    }
+  }
+}
 
 // ------------------
 // SETUP HANDLERS
@@ -221,9 +253,28 @@ void startNormalMode() {
     Serial.println("Already onboarded — skipping /onBoard");
   }
   initI2S();
+  // ---- AUDIO SOCKET SETUP ----
+  audioSocket.beginSSL(
+    "wingtrace-production.up.railway.app", // host
+    443,
+    "/startAudio"                               // websocket path
+  );
+
+  audioSocket.onEvent(audioSocketEvent);
+  audioSocket.setReconnectInterval(5000);
+
   prefs.remove("setupToken");
   sendAlive();
   lastAlive = millis();
+  xTaskCreatePinnedToCore(
+    audioTask,
+    "AudioTask",
+    8192,
+    NULL,
+    2,          // HIGH priority
+    &audioTaskHandle,
+    0           // Core 0
+  );
 }
 
 // ------------------
@@ -276,25 +327,16 @@ void handleCommand(String command) {
     ESP.restart();
   }
 
-  if (command == "START_AUDIO") {
+ if (command == "START_AUDIO") {
     Serial.println(">>> START AUDIO");
     isRecording = true;
   }
 
   if (command == "STOP_AUDIO") {
-    if (!isRecording) return;   // safety
-
     Serial.println(">>> STOP AUDIO");
     isRecording = false;
-
-    // DO NOT call /stop here
   }
-
-
 }
-
-
-
 
 // ------------------
 // POLL SERVER COMMAND
@@ -324,7 +366,6 @@ void pollServerCommand() {
       handleCommand("STOP_AUDIO");
     }
   }
-
   http.end();
 }
 
@@ -414,9 +455,6 @@ void loop() {
     sendWeather();
   }
 
-  if (isRecording) {
-    sendAudioChunk();   // continuous streaming
-  }
-
+  audioSocket.loop();
 }
 
