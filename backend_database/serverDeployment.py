@@ -681,7 +681,7 @@ def maybe_flush_audio(device_id):
         flush_audio(device_id)
 
 @sock.route('/startAudioStream')
-def start_audio(ws):
+def audio_stream(ws):
     device_id = None
 
     try:
