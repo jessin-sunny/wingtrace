@@ -563,6 +563,8 @@ def add_device():
 @app.route("/startAudio", methods=["POST"])
 def start_audio():
     data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "Invalid JSON"}), 400
     device_id = data.get("deviceId", "").strip()
     user_id   = data.get("userId", "").strip()
 
@@ -591,6 +593,8 @@ def start_audio():
 @app.route("/stopAudio", methods=["POST"])
 def stop_audio():
     data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "Invalid JSON"}), 400
     device_id = data.get("deviceId", "").strip()
     user_id   = data.get("userId", "").strip()
 
@@ -685,12 +689,10 @@ def audio_stream(ws):
     device_id = None
 
     try:
-        # FIRST MESSAGE: deviceId (text)
-        device_id = ws.receive()
+        device_id = request.args.get("deviceId")
         if not device_id:
             ws.close()
             return
-
         print(f"[AUDIO CONNECT] {device_id}")
 
         # Init per-device buffers
@@ -714,7 +716,9 @@ def audio_stream(ws):
 
     finally:
         print(f"[AUDIO DISCONNECT] {device_id}")
-        flush_audio(device_id, force=True)
+        if device_id and device_id in audio_locks:
+            flush_audio(device_id, force=True)
+
 
 
 
