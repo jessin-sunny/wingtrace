@@ -9,8 +9,12 @@ from firebase_admin import firestore
 import uuid
 from threading import Lock
 from google.cloud.firestore_v1 import FieldFilter
+from flask_sock import Sock
+from threading import Lock
+from supabase import create_client
 
 app = Flask(__name__)
+sock = Sock(app)
 
 # firebase setup
 firebase_key = json.loads(os.environ["FIREBASE_KEY"])
@@ -23,6 +27,13 @@ firebase_admin.initialize_app(cred, {
 
 rtdb_root = rtdb.reference()
 fs = firestore.client()   # Firestore client
+
+# Supabase
+SUPABASE_URL = os.environ["SUPABASE_URL"]
+SUPABASE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
 
 devices_lock = Lock()   # Thread Safety
 
@@ -49,9 +60,18 @@ SAMPLE_WIDTH = 2  # 16-bit PCM
 devices = {}           # device status
 device_commands = {}   # pending commands
 
-audio_buffer = bytearray()
-recording = False
+# ===============================
+# AUDIO STATE (IN-MEMORY)
+# ===============================
 
+audio_buffers = {}     # deviceId -> bytearray
+audio_locks = {}       # deviceId -> Lock
+last_flush_time = {}   # deviceId -> timestamp
+
+CHUNK_SECONDS = 5
+SAMPLE_RATE = 16000
+CHANNELS = 1
+SAMPLE_WIDTH = 2  # int16
 
 # ===============================
 # DEVICE HEARTBEAT
@@ -537,43 +557,165 @@ def add_device():
         "deviceId": device_id
     }), 201
 
-
-
 # ===============================
-# AUDIO STREAMING
+# AUDIO CONTROLS
 # ===============================
-
-@app.route('/audio', methods=['POST'])
-def update_audio():
+@app.route("/startAudio", methods=["POST"])
+def start_audio():
     data = request.get_json(silent=True)
-    if not data:
-        return jsonify({"error": "No JSON"}), 400
-
     device_id = data.get("deviceId", "").strip()
-    if not device_id:
-        return jsonify({"error": "deviceId missing"}), 400
+    user_id   = data.get("userId", "").strip()
 
-    audio_data = {
-        "isRecording": data.get("isRecording", False),
-        "recentRecordings": data.get("recentRecordings", [])
+    if not device_id or not user_id:
+        return jsonify({"error": "deviceId and userId required"}), 400
+
+    # Ownership validation
+    ok, error = validate_device_owner(device_id, user_id)
+    if not ok:
+        return jsonify(error[0]), error[1]
+
+    # Queue START_AUDIO
+    device_commands[device_id] = {
+        "command": "START_AUDIO",
+        "userId": user_id,
+        "issuedAt": int(time.time())
     }
 
-    fs.reference(f"devices/{device_id}/audio").set(audio_data)
+    print(f"[START_AUDIO QUEUED] {device_id}")
 
     return jsonify({
-        "message": "audio metadata stored",
-        "audio": audio_data
+        "status": "START_AUDIO_QUEUED",
+        "deviceId": device_id
     }), 200
 
-@app.route('/audio/<device_id>', methods=['GET'])
-def get_audio(device_id):
-    ref = fs.reference(f"devices/{device_id.strip()}/audio")
-    data = ref.get()
+@app.route("/stopAudio", methods=["POST"])
+def stop_audio():
+    data = request.get_json(silent=True)
+    device_id = data.get("deviceId", "").strip()
+    user_id   = data.get("userId", "").strip()
 
-    if not data:
-        return jsonify({"error": "No audio data"}), 404
+    if not device_id or not user_id:
+        return jsonify({"error": "deviceId and userId required"}), 400
 
-    return jsonify(data), 200
+    ok, error = validate_device_owner(device_id, user_id)
+    if not ok:
+        return jsonify(error[0]), error[1]
+
+    device_commands[device_id] = {
+        "command": "STOP_AUDIO",
+        "userId": user_id,
+        "issuedAt": int(time.time())
+    }
+
+    print(f"[STOP_AUDIO QUEUED] {device_id}")
+
+    return jsonify({
+        "status": "STOP_AUDIO_QUEUED",
+        "deviceId": device_id
+    }), 200
+
+# ===============================
+# AUDIO WEBSOCKET
+# ===============================
+def upload_to_supabase(filepath, filename):
+    with open(filepath, "rb") as f:
+        data = f.read()
+
+    path = f"{filename}"
+
+    res = supabase.storage.from_("audio-recordings").upload(
+        path,
+        data,
+        {
+            "content-type": "audio/wav"
+        }
+    )
+
+    if res.get("error"):
+        raise Exception(res["error"]["message"])
+
+    public_url = supabase.storage.from_("audio-recordings").get_public_url(path)
+
+    return public_url
+
+
+def store_audio_metadata(device_id, url):
+    ref = rtdb.reference(f"devices/{device_id}/audio")
+    entry = {
+        "url": url,
+        "timestamp": int(time.time()),
+        "duration": CHUNK_SECONDS
+    }
+    existing = ref.get() or []
+    existing.append(entry)
+    ref.set(existing)
+
+def flush_audio(device_id, force=False):
+    with audio_locks[device_id]:
+        if not audio_buffers[device_id]:
+            return
+
+        raw_audio = bytes(audio_buffers[device_id])
+        audio_buffers[device_id].clear()
+        last_flush_time[device_id] = time.time()
+
+    filename = f"{device_id}_{int(time.time())}.wav"
+    filepath = os.path.join(AUDIO_DIR, filename)
+
+    # Write WAV
+    with wave.open(filepath, "wb") as wf:
+        wf.setnchannels(CHANNELS)
+        wf.setsampwidth(SAMPLE_WIDTH)
+        wf.setframerate(SAMPLE_RATE)
+        wf.writeframes(raw_audio)
+
+    # Upload & store metadata
+    public_url = upload_to_supabase(filepath, filename)
+    store_audio_metadata(device_id, public_url)
+
+    print(f"[AUDIO SAVED] {filename}")
+
+def maybe_flush_audio(device_id):
+    now = time.time()
+    if now - last_flush_time[device_id] >= CHUNK_SECONDS:
+        flush_audio(device_id)
+
+@sock.route('/startAudioStream')
+def start_audio(ws):
+    device_id = None
+
+    try:
+        # FIRST MESSAGE: deviceId (text)
+        device_id = ws.receive()
+        if not device_id:
+            ws.close()
+            return
+
+        print(f"[AUDIO CONNECT] {device_id}")
+
+        # Init per-device buffers
+        audio_buffers.setdefault(device_id, bytearray())
+        audio_locks.setdefault(device_id, Lock())
+        last_flush_time.setdefault(device_id, time.time())
+
+        while True:
+            data = ws.receive()
+            if data is None:
+                break  # client disconnected
+
+            if isinstance(data, bytes):
+                with audio_locks[device_id]:
+                    audio_buffers[device_id].extend(data)
+
+                maybe_flush_audio(device_id)
+
+    except Exception as e:
+        print(f"[AUDIO ERROR] {e}")
+
+    finally:
+        print(f"[AUDIO DISCONNECT] {device_id}")
+        flush_audio(device_id, force=True)
+
 
 
 # ===============================

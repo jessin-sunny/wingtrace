@@ -1,3 +1,6 @@
 flask
+flask-sock
 gunicorn
 firebase-admin
+google-cloud-firestore
+supabase
