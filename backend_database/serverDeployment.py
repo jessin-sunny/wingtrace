@@ -651,31 +651,34 @@ def upload_to_supabase(filepath, filename):
 
     return public_url
 
-def store_audio_metadata(device_id, audio_url, duration):
+def store_audio_metadata(device_id, audio_url):
     ref = rtdb.reference(f"devices/{device_id}/audio")
 
     snapshot = ref.get() or {}
 
     recordings = snapshot.get("recentRecordings", [])
-    if not isinstance(recordings, list):
+
+    # Firebase sometimes returns dicts
+    if isinstance(recordings, dict):
         recordings = list(recordings.values())
 
-    audio_id = f"AUD{len(recordings)+1:05d}"
+    ts = int(time.time())
+    audio_id = f"AUD_{device_id}_{ts}"
 
     entry = {
         "audioId": audio_id,
         "audioUrl": audio_url,
-        "duration": duration,
-        "recordedAt": int(time.time()),
+        "recordedAt": ts,
         "status": "COMPLETED"
     }
 
     recordings.append(entry)
 
     ref.set({
-        "isRecording": snapshot.get("isRecording", False),
+        "isRecording": False,
         "recentRecordings": recordings
     })
+
 
 def flush_audio(device_id, force=False):
     with audio_locks[device_id]:
