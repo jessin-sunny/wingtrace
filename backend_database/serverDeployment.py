@@ -583,6 +583,10 @@ def start_audio():
         "issuedAt": int(time.time())
     }
 
+    rtdb.reference(f"devices/{device_id}/audio").update({
+        "isRecording": True
+    })
+
     print(f"[START_AUDIO QUEUED] {device_id}")
 
     return jsonify({
@@ -610,6 +614,10 @@ def stop_audio():
         "userId": user_id,
         "issuedAt": int(time.time())
     }
+
+    rtdb.reference(f"devices/{device_id}/audio").update({
+        "isRecording": False
+    })
 
     print(f"[STOP_AUDIO QUEUED] {device_id}")
 
@@ -643,17 +651,31 @@ def upload_to_supabase(filepath, filename):
 
     return public_url
 
-
-def store_audio_metadata(device_id, url):
+def store_audio_metadata(device_id, audio_url, duration):
     ref = rtdb.reference(f"devices/{device_id}/audio")
+
+    snapshot = ref.get() or {}
+
+    recordings = snapshot.get("recentRecordings", [])
+    if not isinstance(recordings, list):
+        recordings = list(recordings.values())
+
+    audio_id = f"AUD{len(recordings)+1:05d}"
+
     entry = {
-        "url": url,
-        "timestamp": int(time.time()),
-        "duration": CHUNK_SECONDS
+        "audioId": audio_id,
+        "audioUrl": audio_url,
+        "duration": duration,
+        "recordedAt": int(time.time()),
+        "status": "COMPLETED"
     }
-    existing = ref.get() or []
-    existing.append(entry)
-    ref.set(existing)
+
+    recordings.append(entry)
+
+    ref.set({
+        "isRecording": snapshot.get("isRecording", False),
+        "recentRecordings": recordings
+    })
 
 def flush_audio(device_id, force=False):
     with audio_locks[device_id]:
