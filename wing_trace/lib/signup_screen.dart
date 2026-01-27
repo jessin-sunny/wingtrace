@@ -98,27 +98,10 @@ class _SignUpPageState extends State<SignUpPage> {
 
     if (!mounted) return;
 
-    if (error == null) {
-      // Success Logic
-      if (dbRole == 'officer') {
-        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const OfficerDashboard()));
-      } else {
-        bool isHardwareNearby = await _checkForNearbyDevice(); 
-
-        setState(() => _isLoading = false);
-
-        if (isHardwareNearby) {
-          Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const DeviceSetupScreen()));
-        } else {
-          Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const UserDashboard()));
-        }
-      }
-    } else {
-      // Error Logic
-      setState(() => _isLoading = false);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+    // Error Logic
+    setState(() => _isLoading = false);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
     }
-  }
 
   // Simulated Bluetooth/WiFi scan
   Future<bool> _checkForNearbyDevice() async {

@@ -3,6 +3,7 @@
 #include <Preferences.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>   // for https [security]
+#include <WebSocketsClient.h>   // for audio continuous data
 #include "DHT.h"
 #include <driver/i2s.h>
 #include <ArduinoJson.h>
@@ -19,6 +20,8 @@
 
 DHT dht(DHTPIN, DHTTYPE);
 WiFiClientSecure secureClient;
+WebSocketsClient audioSocket;
+
 
 // ------------------
 // CONSTANTS
@@ -57,12 +60,17 @@ unsigned long lastAlive = 0;
 unsigned long lastCommandPoll = 0;
 
 const unsigned long ALIVE_INTERVAL   = 300000; // 5 min
-const unsigned long COMMAND_INTERVAL = 1000;  // 1 second
+const unsigned long COMMAND_INTERVAL = 5000;  // 5 second
 
 int16_t audioBuffer[BUFFER_LEN];
+QueueHandle_t audioQueue;
 bool isRecording = false;
+// audio socket state
+volatile bool audioSocketConnected = false;
 
+// -------------
 // audio part
+// -------------
 void initI2S() {
   i2s_config_t cfg = {
     .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
@@ -90,25 +98,28 @@ void initI2S() {
   Serial.println("I2S initialized");
 }
 
-void sendAudioChunk() {
-  if (!isRecording || WiFi.status() != WL_CONNECTED) return;
+void audioSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
+  switch (type) {
+    case WStype_CONNECTED:
+      Serial.println("Audio socket connected");
+      audioSocketConnected = true;
+      audioSocket.sendTXT(DEVICE_ID);
+      break;
 
-  size_t bytesRead;
-  i2s_read(I2S_NUM_0, audioBuffer, sizeof(audioBuffer),
-           &bytesRead, portMAX_DELAY);
+    case WStype_DISCONNECTED:
+      Serial.println("Audio socket disconnected");
+      audioSocketConnected = false;
+      break;
 
-  HTTPClient http;
-  http.begin(secureClient, String(SERVER_BASE) + "/audio");
-  http.addHeader("Content-Type", "application/octet-stream");
+    case WStype_ERROR:
+      Serial.println("Audio socket error");
+      audioSocketConnected = false;
+      break;
 
-  int code = http.POST((uint8_t*)audioBuffer, bytesRead);
-  if (code < 0) {
-    Serial.println("Audio send failed");
+    default:
+      break;
   }
-
-  http.end();
 }
-
 
 // ------------------
 // SETUP HANDLERS
@@ -221,26 +232,57 @@ void startNormalMode() {
     Serial.println("Already onboarded — skipping /onBoard");
   }
   initI2S();
+  // ---- AUDIO SOCKET SETUP ----
+  audioSocket.beginSSL(
+    "wingtrace-production.up.railway.app", // host
+    443,
+    "/startAudioStream"                              // websocket path
+  );
+
+  audioSocket.onEvent(audioSocketEvent);
+  audioSocket.setReconnectInterval(5000);
+
   prefs.remove("setupToken");
+  sendAlive();
+  lastAlive = millis();
 }
 
 // ------------------
 // SEND HEARTBEAT
 // ------------------
 void sendAlive() {
-  if (WiFi.status() != WL_CONNECTED) return;
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("ALIVE message failed to send due to no internet");
+    return;
+  }
+
+  // Get WiFi signal strength (RSSI in dBm)
+  int networkStrength = WiFi.RSSI();   // e.g. -30 (strong) to -90 (weak)
+
+  // Fake battery level for now
+  int batteryLevel = 100;
 
   HTTPClient http;
   http.begin(secureClient, String(SERVER_BASE) + "/alive");
   http.addHeader("Content-Type", "application/json");
 
   String payload =
-    "{\"deviceId\":\"" + String(DEVICE_ID) + "\",\"status\":\"ALIVE\"}";
+    "{"
+      "\"deviceId\":\"" + String(DEVICE_ID) + "\","
+      "\"status\":\"ALIVE\","
+      "\"networkStrength\":" + String(networkStrength) + ","
+      "\"batteryLevel\":" + String(batteryLevel) +
+    "}";
 
   int code = http.POST(payload);
+
   Serial.println("ALIVE sent, code: " + String(code));
+  Serial.println("RSSI: " + String(networkStrength) + " dBm");
+  Serial.println("Battery: " + String(batteryLevel) + "%");
+
   http.end();
 }
+
 
 // ------------------
 // HANDLE COMMAND
@@ -255,25 +297,16 @@ void handleCommand(String command) {
     ESP.restart();
   }
 
-  if (command == "START_AUDIO") {
+ if (command == "START_AUDIO") {
     Serial.println(">>> START AUDIO");
     isRecording = true;
   }
 
   if (command == "STOP_AUDIO") {
-    if (!isRecording) return;   // safety
-
     Serial.println(">>> STOP AUDIO");
     isRecording = false;
-
-    // DO NOT call /stop here
   }
-
-
 }
-
-
-
 
 // ------------------
 // POLL SERVER COMMAND
@@ -303,7 +336,6 @@ void pollServerCommand() {
       handleCommand("STOP_AUDIO");
     }
   }
-
   http.end();
 }
 
@@ -363,6 +395,7 @@ void setup() {
   prefs.end();
   
   if (hasSSID) {
+    audioQueue = xQueueCreate(4, sizeof(audioBuffer));
     startNormalMode();
     
   } else {
@@ -393,9 +426,32 @@ void loop() {
     sendWeather();
   }
 
+  audioSocket.loop();
+
+  // ===== AUDIO STREAMING (SAFE) =====
+  static size_t bytesRead = 0;
+
   if (isRecording) {
-    sendAudioChunk();   // continuous streaming
+    i2s_read(
+      I2S_NUM_0,
+      audioBuffer,
+      sizeof(audioBuffer),
+      &bytesRead,
+      0   // NON-BLOCKING
+    );
+
+    if (bytesRead > 0) {
+      xQueueSend(audioQueue, audioBuffer, 0);
+    }
   }
+  // send audio from queue to ws
+  if (isRecording && audioSocketConnected) {
+  int16_t tempBuf[BUFFER_LEN];
+  if (xQueueReceive(audioQueue, tempBuf, 0) == pdTRUE) {
+    audioSocket.sendBIN((uint8_t*)tempBuf, sizeof(tempBuf));
+  }
+}
+
 
 }
 

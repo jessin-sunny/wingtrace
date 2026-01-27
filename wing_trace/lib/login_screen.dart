@@ -40,50 +40,11 @@ class _LoginPageState extends State<LoginPage> {
       _passwordController.text.trim(),
     );
 
-    if (error != null) {
-      setState(() => _isLoading = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
-      }
-    } else {
-      // B. Login Success -> Fetch Role and Setup Status from Firestore
-      try {
-        String uid = FirebaseAuth.instance.currentUser!.uid;
-        DocumentSnapshot userDoc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
-        
-        setState(() => _isLoading = false);
-
-        if (userDoc.exists) {
-          // C. READ THE NEW SETUP STATUS
-          bool finishedSetup = false;
-          try {
-            finishedSetup = userDoc.get('hasCompletedSetup') ?? false;
-          } catch (e) {
-            finishedSetup = false; // Handle case where field doesn't exist yet
-          }
-          
-          String role = userDoc.get('role'); // 'farmer' or 'officer'
-
-          // D. NAVIGATE BASED ON ROLE AND SETUP STATUS
-          if (role == 'officer' || role == 'admin') {
-            Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const OfficerDashboard()));
-          } else {
-            // Both "Skipped" and "Completed" users go to the Dashboard.
-            // The Dashboard's "Connect" button handles the redirection to Setup if needed.
-            Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const UserDashboard()));
-          }
-        } else {
-          // Fallback for unexpected missing documents
-          Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const UserDashboard()));
-        }
-      } catch (e) {
-        setState(() => _isLoading = false);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error fetching user data: $e")));
-        }
-      }
+    setState(() => _isLoading = false);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
     }
-  }
+    }
 
   void _showForgotPasswordDialog() {
     final TextEditingController resetEmailController = TextEditingController();
@@ -128,16 +89,10 @@ class _LoginPageState extends State<LoginPage> {
               String? error = await _authService.sendPasswordResetEmail(email);
 
               // 4. Use the captured 'messenger' to show the snackbar
-              if (error == null) {
-                messenger.showSnackBar(
-                  const SnackBar(content: Text("Reset link sent! Check your email.")),
-                );
-              } else {
-                messenger.showSnackBar(
-                  SnackBar(content: Text("Error: $error")),
-                );
-              }
-            },
+              messenger.showSnackBar(
+                SnackBar(content: Text("Error: $error")),
+              );
+                        },
             child: const Text("Send Link", style: TextStyle(color: Colors.white)),
           ),
         ],
