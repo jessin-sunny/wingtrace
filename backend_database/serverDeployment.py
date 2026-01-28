@@ -566,6 +566,7 @@ def start_audio():
     data = request.get_json(silent=True)
     if not data:
         return jsonify({"error": "Invalid JSON"}), 400
+
     device_id = data.get("deviceId", "").strip()
     user_id   = data.get("userId", "").strip()
 
@@ -577,6 +578,13 @@ def start_audio():
     if not ok:
         return jsonify(error[0]), error[1]
 
+    # check device ONLINE
+    status = rtdb.reference(f"devices/{device_id}/status").get()
+    if not status or not status.get("isOnline"):
+        return jsonify({
+            "error": "Device must be ONLINE to start audio"
+        }), 409
+
     # Queue START_AUDIO
     device_commands[device_id] = {
         "command": "START_AUDIO",
@@ -584,6 +592,7 @@ def start_audio():
         "issuedAt": int(time.time())
     }
 
+    # Mark recording ON
     rtdb.reference(f"devices/{device_id}/audio").update({
         "isRecording": True
     })
@@ -600,25 +609,42 @@ def stop_audio():
     data = request.get_json(silent=True)
     if not data:
         return jsonify({"error": "Invalid JSON"}), 400
+
     device_id = data.get("deviceId", "").strip()
     user_id   = data.get("userId", "").strip()
 
     if not device_id or not user_id:
         return jsonify({"error": "deviceId and userId required"}), 400
 
+    # Ownership validation
     ok, error = validate_device_owner(device_id, user_id)
     if not ok:
         return jsonify(error[0]), error[1]
 
+    # Queue STOP_AUDIO to device
     device_commands[device_id] = {
         "command": "STOP_AUDIO",
         "userId": user_id,
         "issuedAt": int(time.time())
     }
 
+    # Update recording state
     rtdb.reference(f"devices/{device_id}/audio").update({
         "isRecording": False
     })
+
+    # FINAL FLUSH (even if < 5s)
+    if (
+        device_id in audio_buffers
+        and device_id in audio_locks
+        and audio_buffers[device_id]
+    ):
+        with audio_locks[device_id]:
+            raw_audio = bytes(audio_buffers[device_id])
+            audio_buffers[device_id].clear()
+
+        # write + upload + store metadata
+        flush_audio_chunk(device_id, raw_audio)
 
     print(f"[STOP_AUDIO QUEUED] {device_id}")
 
@@ -626,6 +652,8 @@ def stop_audio():
         "status": "STOP_AUDIO_QUEUED",
         "deviceId": device_id
     }), 200
+
+
 
 # ===============================
 # AUDIO WEBSOCKET
