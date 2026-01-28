@@ -52,6 +52,8 @@ os.makedirs(AUDIO_DIR, exist_ok=True)
 SAMPLE_RATE = 16000
 CHANNELS = 1
 SAMPLE_WIDTH = 2  # 16-bit PCM
+BYTES_PER_SECOND = SAMPLE_RATE * SAMPLE_WIDTH  # 32000
+CHUNK_BYTES = BYTES_PER_SECOND * 5             # 160000
 
 # ===============================
 # GLOBAL STATE (in-memory)
@@ -66,7 +68,6 @@ device_commands = {}   # pending commands
 
 audio_buffers = {}     # deviceId -> bytearray
 audio_locks = {}       # deviceId -> Lock
-last_flush_time = {}   # deviceId -> timestamp
 
 CHUNK_SECONDS = 5
 SAMPLE_RATE = 16000
@@ -635,90 +636,61 @@ def upload_to_supabase(filepath, filename):
 
     bucket = supabase.storage.from_("audio-recordings")
 
-    # Upload
     res = bucket.upload(
         filename,
         data,
         file_options={"content-type": "audio/wav"}
     )
 
-    # If upload failed, SDK throws OR returns error attribute
     if hasattr(res, "error") and res.error:
         raise Exception(res.error)
 
-    # Get public URL
-    public_url = bucket.get_public_url(filename)
-
-    return public_url
+    return bucket.get_public_url(filename)
 
 def store_audio_metadata(device_id, audio_url):
     ref = rtdb.reference(f"devices/{device_id}/audio")
 
     snapshot = ref.get() or {}
-
     recordings = snapshot.get("recentRecordings", [])
 
-    # Firebase sometimes returns dicts
     if isinstance(recordings, dict):
         recordings = list(recordings.values())
 
     ts = int(time.time())
     audio_id = f"AUD_{device_id}_{ts}"
 
-    entry = {
+    recordings.append({
         "audioId": audio_id,
         "audioUrl": audio_url,
         "recordedAt": ts,
         "status": "COMPLETED"
-    }
-
-    recordings.append(entry)
+    })
 
     ref.update({
         "recentRecordings": recordings
     })
 
-
-def flush_audio(device_id, force=False):
-    with audio_locks[device_id]:
-        if not audio_buffers[device_id]:
-            return
-        if not force:
-            # only flush when chunk duration reached
-            if time.time() - last_flush_time[device_id] < CHUNK_SECONDS:
-                return
-
-        raw_audio = bytes(audio_buffers[device_id])
-        audio_buffers[device_id].clear()
-        last_flush_time[device_id] = time.time()
-
+def flush_audio_chunk(device_id, raw_audio):
     filename = f"{device_id}_{int(time.time())}.wav"
     filepath = os.path.join(AUDIO_DIR, filename)
 
-    # Write WAV
     with wave.open(filepath, "wb") as wf:
         wf.setnchannels(CHANNELS)
         wf.setsampwidth(SAMPLE_WIDTH)
         wf.setframerate(SAMPLE_RATE)
         wf.writeframes(raw_audio)
 
-    # Upload & store metadata
     public_url = upload_to_supabase(filepath, filename)
     store_audio_metadata(device_id, public_url)
 
     print(f"[AUDIO SAVED] {filename}")
 
-def maybe_flush_audio(device_id):
-    now = time.time()
-    if now - last_flush_time[device_id] >= CHUNK_SECONDS:
-        flush_audio(device_id)
-
-@sock.route('/startAudioStream')
+@sock.route("/startAudioStream")
 def audio_stream(ws):
     device_id = None
 
     try:
-        # FIRST MESSAGE: deviceId (text)
+        # FIRST MESSAGE MUST BE deviceId
         device_id = ws.receive()
         if not device_id:
             ws.close()
@@ -726,33 +698,36 @@ def audio_stream(ws):
 
         print(f"[AUDIO CONNECT] {device_id}")
 
-        # Init per-device buffers
         audio_buffers.setdefault(device_id, bytearray())
         audio_locks.setdefault(device_id, Lock())
-        last_flush_time.setdefault(device_id, time.time())
 
         while True:
             data = ws.receive()
             if data is None:
-                break  # client disconnected
+                break
 
             if isinstance(data, bytes):
                 with audio_locks[device_id]:
                     audio_buffers[device_id].extend(data)
 
-                maybe_flush_audio(device_id)
+                    # EXACT 5s slicing
+                    while len(audio_buffers[device_id]) >= CHUNK_BYTES:
+                        chunk = audio_buffers[device_id][:CHUNK_BYTES]
+                        audio_buffers[device_id] = audio_buffers[device_id][CHUNK_BYTES:]
+
+                        flush_audio_chunk(device_id, bytes(chunk))
 
     except Exception as e:
         print(f"[AUDIO ERROR] {e}")
 
     finally:
         print(f"[AUDIO DISCONNECT] {device_id}")
-        if (
-            device_id
-            and device_id in audio_locks
-            and device_id in audio_buffers
-        ):
-            flush_audio(device_id, force=True)
+
+        # Save leftover (<5s)
+        if device_id in audio_buffers and audio_buffers[device_id]:
+            flush_audio_chunk(device_id, bytes(audio_buffers[device_id]))
+            audio_buffers[device_id].clear()
+
 
 
 
