@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_database/firebase_database.dart'; // 🔹 FIXED: Added missing import
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 
@@ -16,7 +17,7 @@ class _PestChatbotScreenState extends State<PestChatbotScreen> {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   bool _isLoading = false;
-  String? _userProfilePic; // 🔹 Added to store user image path
+  String? _userProfilePic;
 
   static const String _apiKey = String.fromEnvironment('API_KEY');
   static const String _baseUrl = "https://api.groq.com/openai/v1/chat/completions";
@@ -24,7 +25,122 @@ class _PestChatbotScreenState extends State<PestChatbotScreen> {
   @override
   void initState() {
     super.initState();
-    _fetchUserAvatar(); // 🔹 Fetch the profile pic on startup
+    _fetchUserAvatar();
+  }
+
+  // 🔹 Step 1: RETRIEVAL - Fetching the specific user "Context"
+  Future<String> _retrieveUserContext() async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) return "User context unavailable.";
+
+    try {
+      //  Fetch User Data (Name and Device List)
+      final userDoc = await _firestore.collection('users').doc(uid).get();
+      final userData = userDoc.data() as Map<String, dynamic>?;
+
+      // 🔹 DYNAMIC NAME: Use the name from Firestore, fallback to 'User' if missing
+      final String userName = userData?['name'] ?? "User";
+      final String deviceId = (userData?['devices'] as List?)?.first ?? "unknown";
+
+      // 1. Fetch Latest 3 Detections from Firestore
+      final detectionSnap = await _firestore
+          .collection('users').doc(uid)
+          .collection('detections') 
+          .orderBy('timestamp', descending: true)
+          .limit(3).get();
+
+      String history = detectionSnap.docs.isEmpty 
+          ? "No recent pests detected via WingTrace camera." 
+          : detectionSnap.docs.map((doc) {
+              final data = doc.data();
+              return "${data['pest_name']} (Confidence: ${data['confidence'] ?? 'N/A'})";
+            }).join(", ");
+
+      
+      final rtdbRef = FirebaseDatabase.instance.ref("devices/$deviceId");
+      final weatherSnap = await rtdbRef.child("weather").get();
+      
+      String environment = "Field sensors are currently offline.";
+      if (weatherSnap.exists) {
+        final w = Map<dynamic, dynamic>.from(weatherSnap.value as Map);
+        environment = "Temperature: ${w['temperature']}°C, Humidity: ${w['humidity']}%";
+      }
+
+      // 3. Construct the "Briefing" for Tracy
+      return """
+      [CURRENT FIELD DATA FOR TRACY]
+      - User Name: $userName 
+      - Recent Detections: $history
+      - Environmental Stats: $environment
+      - Active Device: $deviceId
+      """;
+    } catch (e) {
+      return "Context Error: $e";
+    }
+  }
+
+  // 🔹 Step 2: AUGMENTATION & GENERATION
+  Future<void> _sendMessage(String text) async {
+    if (text.trim().isEmpty) return;
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) return;
+
+    _controller.clear();
+    setState(() => _isLoading = true);
+
+    try {
+      // 🟢 RAG ACTION: Get user context FIRST
+      String contextBlock = await _retrieveUserContext();
+
+      await _saveToFirebase("user", text);
+      
+      final historySnap = await _firestore
+          .collection('users').doc(uid).collection('chats')
+          .orderBy('timestamp', descending: true).limit(6).get();
+
+      final history = historySnap.docs.reversed.map((doc) => {
+        "role": doc['role'] == 'user' ? 'user' : 'assistant',
+        "content": doc['text']
+      }).toList();
+
+      // 🟢 AI CALL: Inject context into the System Prompt
+      final response = await http.post(
+        Uri.parse(_baseUrl),
+        headers: {
+          'Authorization': 'Bearer $_apiKey',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          "model": "llama-3.1-8b-instant",
+          "messages": [
+            {
+              "role": "system", 
+              "content": """You are Tracy, the AI Pest Expert for WingTrace.
+              IDENTITY: Professional, scientific, and Kerala-focused.
+              
+              SHARED CONTEXT:
+              $contextBlock
+              
+              INSTRUCTIONS: 
+              1. Use the 'Recent Detections' and 'Environmental Stats' provided above to personalize your advice.
+              2. If humidity is >70%, explicitly warn about Aedes mosquito breeding.
+              3. If pests were detected, provide scientific but practical prevention steps.
+              4. Keep responses under 4 sentences."""
+            },
+            ...history
+          ],
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final botResponse = jsonDecode(response.body)['choices'][0]['message']['content'];
+        await _saveToFirebase("bot", botResponse);
+      }
+    } catch (e) {
+      debugPrint("RAG Chat Error: $e");
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 
   // 🔹 Logic to fetch the real profile pic path from Firestore
@@ -56,64 +172,6 @@ class _PestChatbotScreenState extends State<PestChatbotScreen> {
     });
   }
 
-  Future<void> _sendMessage(String text) async {
-    if (text.trim().isEmpty) return;
-    final uid = _auth.currentUser?.uid;
-    if (uid == null) return;
-
-    _controller.clear();
-    setState(() => _isLoading = true);
-
-    try {
-      await _saveToFirebase("user", text);
-      final historySnap = await _firestore
-          .collection('users')
-          .doc(uid)
-          .collection('chats')
-          .orderBy('timestamp', descending: true)
-          .limit(6)
-          .get();
-
-      final history = historySnap.docs.reversed.map((doc) => {
-        "role": doc['role'] == 'user' ? 'user' : 'assistant',
-        "content": doc['text']
-      }).toList();
-
-      final response = await http.post(
-        Uri.parse(_baseUrl),
-        headers: {
-          'Authorization': 'Bearer $_apiKey',
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode({
-          "model": "llama-3.1-8b-instant",
-          "messages": [
-            {"role": "system", "content": """You are Tracy, the official AI Pest Expert for the WingTrace mosquito and pest detection system.
-                                              Core Identity:
-                                              Personality: Professional, scientific, yet empathetic towards farmers and residents dealing with infestations.
-                                              Objective: Provide actionable advice on pest prevention (especially Aedes mosquitoes), explain the risks of vector-borne diseases like Dengue, and guide users on how to use WingTrace data to protect their fields.
-                                              Response Guidelines:
-                                              Conciseness: Keep answers under 3-4 sentences unless a detailed prevention step is requested.
-                                              Scientific Accuracy: Use entomological facts (e.g., mention breeding in stagnant water or CO2 detection).
-                                              Action-Oriented: Always end with a practical tip (e.g., 'Ensure no water collects in your coconut shells after the rain').
-                                              Safety Warning: If a user mentions severe symptoms (high fever, joint pain), advise them to consult a medical professional immediately.
-                                              Context: You are chatting with users in Kerala, India. Use local context where relevant (e.g., monsoon preparedness)
-                                              """},
-            ...history
-          ],
-        }),
-      );
-
-      if (response.statusCode == 200) {
-        final botResponse = jsonDecode(response.body)['choices'][0]['message']['content'];
-        await _saveToFirebase("bot", botResponse);
-      }
-    } catch (e) {
-      debugPrint("Chat Error: $e");
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
-    }
-  }
 
   Future<void> _deleteChatHistory() async {
     final uid = _auth.currentUser?.uid;
