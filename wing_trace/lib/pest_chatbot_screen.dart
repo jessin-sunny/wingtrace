@@ -122,10 +122,11 @@ class _PestChatbotScreenState extends State<PestChatbotScreen> {
               $contextBlock
               
               INSTRUCTIONS: 
-              1. Use the 'Recent Detections' and 'Environmental Stats' provided above to personalize your advice.
-              2. If humidity is >70%, explicitly warn about Aedes mosquito breeding.
-              3. If pests were detected, provide scientific but practical prevention steps.
-              4. Keep responses under 4 sentences."""
+              1. Language Support: This is crucial. If the user speaks in Malayalam (മലയാളം), you MUST respond in Malayalam. If they speak in English, respond in English.
+              2. Tone: Maintain your professional yet empathetic personality in both languages.
+              3. Clarity: Even when speaking Malayalam, keep the scientific names of pests (like 'Aedes Aegypti') in English brackets if needed for clarity.
+              4. Use the provided context ($contextBlock) to give specific advice about their field in their chosen language.
+              5. Keep responses under 4 sentences."""
             },
             ...history
           ],
@@ -354,12 +355,16 @@ class _PestChatbotScreenState extends State<PestChatbotScreen> {
                 padding: const EdgeInsets.only(left: 15),
                 child: TextField(
                   controller: _controller,
+                  // 🔹 Allows the keyboard to suggest words in both English and Malayalam
+                  keyboardType: TextInputType.multiline, 
+                  maxLines: null, // Allows the box to expand if the Malayalam text is long
                   decoration: const InputDecoration(
-                    hintText: "Type a message...",
+                    hintText: "ചോദിക്കൂ... (Ask anything...)", // Added Malayalam hint
                     border: InputBorder.none,
                   ),
                   onSubmitted: (val) => _sendMessage(val),
                 ),
+                  
               ),
             ),
             GestureDetector(
