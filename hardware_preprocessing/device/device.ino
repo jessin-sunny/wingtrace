@@ -8,8 +8,9 @@
 #include <driver/i2s.h>
 #include <ArduinoJson.h>
 
-#define DHTPIN  27        // your DHT11 pin
+#define DHTPIN  27
 #define DHTTYPE DHT11
+#define RESET_BUTTON_PIN  32
 
 #define I2S_SCK  14
 #define I2S_WS   25
@@ -17,6 +18,7 @@
 
 #define SAMPLE_RATE 16000
 #define BUFFER_LEN  256   // samples
+#define NETWORK_RESET_TIME 3000   // 3 seconds
 
 DHT dht(DHTPIN, DHTTYPE);
 WiFiClientSecure secureClient;
@@ -31,7 +33,9 @@ const char* SERVER_BASE = "https://wingtrace-production.up.railway.app";
 // weather timer variables
 unsigned long lastWeather = 0;
 const unsigned long WEATHER_INTERVAL = 60000; // 1 minute
-
+//push button variables
+unsigned long buttonPressStart = 0;
+bool buttonPressed = false;
 
 // ------------------
 // OBJECTS
@@ -382,11 +386,29 @@ void sendWeather() {
   http.end();
 }
 
+// Network Reset
+void networkReset() {
+  Serial.println(">>> NETWORK RESET");
+
+  prefs.begin("wifi", false);
+  prefs.remove("ssid");
+  prefs.remove("pass");
+  prefs.end();
+
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_AP);
+
+  delay(500);
+  startSetupMode();
+}
+
+
 // ------------------
 // SETUP
 // ------------------
 void setup() {
   Serial.begin(921600);
+  pinMode(RESET_BUTTON_PIN, INPUT_PULLUP);
   dht.begin();
   delay(2000);
 
@@ -410,6 +432,26 @@ void loop() {
   server.handleClient();
 
   unsigned long now = millis();
+
+  bool currentState = digitalRead(RESET_BUTTON_PIN);
+  static bool resetTriggered = false;   // Prevent repeated SoftAP restarts if button is held
+
+  if (currentState == LOW && !buttonPressed) {
+      buttonPressed = true;
+      buttonPressStart = millis();
+      resetTriggered = false; 
+      delay(50);
+  }
+
+  if (currentState == HIGH && buttonPressed) {
+    unsigned long pressDuration = millis() - buttonPressStart;
+    buttonPressed = false;
+
+    if (pressDuration >= NETWORK_RESET_TIME && !resetTriggered) {
+      resetTriggered = true;
+      networkReset();
+    }
+  }
 
   if (now - lastAlive > ALIVE_INTERVAL) {
     lastAlive = now;
@@ -446,12 +488,10 @@ void loop() {
   }
   // send audio from queue to ws
   if (isRecording && audioSocketConnected) {
-  int16_t tempBuf[BUFFER_LEN];
-  if (xQueueReceive(audioQueue, tempBuf, 0) == pdTRUE) {
-    audioSocket.sendBIN((uint8_t*)tempBuf, sizeof(tempBuf));
+    int16_t tempBuf[BUFFER_LEN];
+    if (xQueueReceive(audioQueue, tempBuf, 0) == pdTRUE) {
+      audioSocket.sendBIN((uint8_t*)tempBuf, sizeof(tempBuf));
+    }
   }
-}
-
-
 }
 

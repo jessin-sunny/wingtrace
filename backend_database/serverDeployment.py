@@ -119,7 +119,7 @@ def alive():
     # Firebase update
     rtdb.reference(f"devices/{device_id}/status").update({
         "isOnline": True,
-        "isReset": False,
+        "factoryReset": False,
         "lastSeen": now,
         "batteryLevel": battery_level,
         "networkStrength": signal_quality
@@ -318,7 +318,7 @@ def onBoard_device():
 
     rtdb.reference(f"devices/{device_id}/status").update({
         "isOnline": True,
-        "isReset": False
+        "factoryReset": False
     })
 
     return jsonify({
@@ -430,9 +430,9 @@ def disconnect():
 # ===============================
 # COMMAND CHANNEL
 # ===============================
-# Fcatory Reset device
-@app.route("/reset", methods=["POST"])
-def reset_device():
+# Factory Reset device
+@app.route("/factoryReset", methods=["POST"])
+def factoryReset():
     data = request.get_json(silent=True)
     device_id = data.get("deviceId", "").strip()
     user_id   = data.get("userId", "").strip()
@@ -491,7 +491,7 @@ def get_command():
         # RTDB: mark offline + reset
         rtdb.reference(f"devices/{device_id}/status").update({
             "isOnline": False,
-            "isReset": True
+            "factoryReset": True
         })
 
         # Firestore: clear ownership
