@@ -430,7 +430,7 @@ def disconnect():
 # ===============================
 # COMMAND CHANNEL
 # ===============================
-# Factory Reset device
+# Factory Reset
 @app.route("/factoryReset", methods=["POST"])
 def factoryReset():
     data = request.get_json(silent=True)
