@@ -6,6 +6,7 @@ import 'package:network_info_plus/network_info_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'user_dashboard.dart';
 import 'dart:convert';
+import 'dart:async';
 
 class DeviceSetupScreen extends StatefulWidget {
   const DeviceSetupScreen({super.key});
@@ -18,53 +19,95 @@ class _DeviceSetupScreenState extends State<DeviceSetupScreen> {
   int _currentStep = 0;
   bool _isLoading = false;
   final NetworkInfo _networkInfo = NetworkInfo();
-
+  
+  final String serverUrl = "https://wingtrace-production.up.railway.app";
   final TextEditingController _ssidController = TextEditingController();
   final TextEditingController _passController = TextEditingController();
 
-  String? _detectedDeviceId;
-  String? _detectedDeviceName;
+  String? _setupToken;
+  StreamSubscription<DocumentSnapshot>? _statusSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    // 🔹 CALL IMMEDIATELY: Get token while internet is still active
+    _fetchSetupToken(isInitial: true); 
+  }
+
+  @override
+  void dispose() {
+    _statusSubscription?.cancel();
+    _ssidController.dispose();
+    _passController.dispose();
+    super.dispose();
+  }
 
   // --- STEP 1: Verify Hardware WiFi Connection ---
   Future<void> _checkWifiConnection() async {
+    // 🔹 GUARD: Do not proceed if we don't have a token from the server yet
+    if (_setupToken == null) {
+      await _fetchSetupToken();
+      if (_setupToken == null) {
+        _showError("Still waiting for internet to fetch setup token. Please check your connection.");
+        return;
+      }
+    }
+
     setState(() => _isLoading = true);
 
-    // 1. Explicitly request BOTH permissions required for WiFi SSID on Android 13+
     Map<Permission, PermissionStatus> statuses = await [
       Permission.locationWhenInUse,
-      Permission.nearbyWifiDevices, // Critical for Android 13+
+      Permission.nearbyWifiDevices,
     ].request();
 
     if (statuses[Permission.locationWhenInUse]!.isGranted) {
-      // Check GPS service status
-      var serviceStatus = await Permission.location.serviceStatus;
-      
-      if (serviceStatus.isEnabled) {
-        String? wifiName = await _networkInfo.getWifiName();
-        String cleanSsid = wifiName?.replaceAll('"', '') ?? "";
+      String? wifiName = await _networkInfo.getWifiName();
+      String cleanSsid = wifiName?.replaceAll('"', '') ?? "";
 
-        if (cleanSsid.contains("WingTrace_V1")) {
-          setState(() {
-            _detectedDeviceId = "WT-${DateTime.now().millisecondsSinceEpoch}"; 
-            _detectedDeviceName = "WingTrace_V1";
-            _currentStep = 1;
-          });
-        } else {
-          _showError("Connected to: $cleanSsid. Please switch to 'WingTrace_V1' WiFi.");
-        }
+      // 🔹 STRICT VERIFICATION: Ensure we are actually on WingTrace
+      if (cleanSsid.toLowerCase().startsWith("wingtrace")) {
+        setState(() {
+          _currentStep = 1; // Advance ONLY if SSID is correct
+        });
+      } else if (cleanSsid.isEmpty || cleanSsid == "<unknown ssid>") {
+        _showError("Could not detect WiFi name. Ensure GPS/Location is ON.");
       } else {
-        _showError("Please enable GPS/Location in your system tray.");
+        _showError("Connected to: $cleanSsid. Please switch to 'WingTrace' WiFi.");
       }
     } else {
-      _showError("Permission denied. Please enable it in Settings > Apps > wing_trace.");
-      // Force open settings if they click verify again and it's denied
-      if (statuses[Permission.locationWhenInUse]!.isPermanentlyDenied) {
-        await openAppSettings();
-      }
+      _showError("Location/Nearby permissions required.");
     }
     setState(() => _isLoading = false);
   }
-  // --- STEP 2: Send Internet Credentials to Hardware Gateway ---
+
+  // --- STEP 1.5: Fetch Token from Railway Server ---
+  Future<void> _fetchSetupToken({bool isInitial = false}) async {
+    final String? userId = FirebaseAuth.instance.currentUser?.uid;
+    try {
+      final response = await http.post(
+        Uri.parse("$serverUrl/startSetup"),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({"userId": userId}),
+      ).timeout(const Duration(seconds: 30));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        setState(() {
+          _setupToken = data['setupToken'];
+        });
+        debugPrint("Token fetched: $_setupToken");
+      } else if (!isInitial) {
+        _showError("Server rejected setup request");
+      }
+    } catch (e) {
+      if (!isInitial) {
+        _showError("Failed to reach server. Connect to internet first.");
+      }
+      debugPrint("Token fetch error: $e");
+    }
+  }
+
+  // --- STEP 2: Send Credentials + Token to ESP32 ---
   Future<void> _provisionHardware() async {
     if (_ssidController.text.isEmpty || _passController.text.isEmpty) {
       _showError("Please enter WiFi details.");
@@ -72,209 +115,145 @@ class _DeviceSetupScreenState extends State<DeviceSetupScreen> {
     }
 
     setState(() => _isLoading = true);
+    final String? userId = FirebaseAuth.instance.currentUser?.uid;
 
     try {
-      // 1. Send credentials to hardware's internal web server /save endpoint
-      // The http package automatically handles 'application/x-www-form-urlencoded' 
-      // when 'body' is a Map<String, String>.
+      // Send JSON to ESP32 endpoint
       final response = await http.post(
-        Uri.parse("http://192.168.4.1/save"),
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: {
+        Uri.parse("http://192.168.4.1/setup"),
+        body: jsonEncode({
           "ssid": _ssidController.text.trim(),
           "password": _passController.text.trim(),
-        },
-      ).timeout(const Duration(seconds: 12));
+          "userid": userId,
+          "setupToken": _setupToken,
+        }),
+      ).timeout(const Duration(seconds: 8));
 
       if (response.statusCode == 200) {
-        debugPrint("WiFi credentials sent successfully to hardware");
-        // 2. Proceed to register the device in Firebase once hardware has credentials
-        await _registerToFirebase();
-      } else {
-        _showError("Hardware rejected credentials: ${response.statusCode}");
+        _listenForCompletion();
       }
     } catch (e) {
-      // SUCCESS HACK: In IoT provisioning, a 'Connection timeout' or 'Software caused connection abort'
-      // often happens because the hardware received the credentials and immediately 
-      // dropped the Soft-AP to reboot and connect to the new internet WiFi.
-      debugPrint("Connection dropped (likely hardware rebooting): $e");
-      
-      // We proceed to register in Firebase because the credentials were likely accepted
-      await _registerToFirebase(); 
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
+      // Expected: connection drops when ESP32 restarts
+      _listenForCompletion();
     }
   }
 
-  
-  // --- STEP 2: Send Internet Credentials to Hardware Gateway ---
-  // Future<void> _provisionHardware() async {
-  //   if (_ssidController.text.isEmpty || _passController.text.isEmpty) {
-  //     _showError("Please enter WiFi details.");
-  //     return;
-  //   }
+  // --- STEP 3: Monitor Firestore ---
+  void _listenForCompletion() {
+    if (_setupToken == null) return;
 
-  //   setState(() => _isLoading = true);
+    _statusSubscription = FirebaseFirestore.instance
+        .collection('setupSessions')
+        .doc(_setupToken!)
+        .snapshots()
+        .listen((snapshot) {
+      if (snapshot.exists) {
+        final data = snapshot.data();
+        if (data?['status'] == "USED") {
+          _finalizeSetup();
+        } else if (data?['status'] == "EXPIRED") {
+          _statusSubscription?.cancel();
+          setState(() => _isLoading = false);
+          _showError("Setup token expired. Please restart.");
+        }
+      }
+    });
 
-  //   try {
-  //     // 1. Send credentials to hardware internal server
-  //     final response = await http.post(
-  //       Uri.parse("http://192.168.4.1/save"),
-  //       headers: {
-  //         "Content-Type": "application/x-www-form-urlencoded",
-  //       },
-  //       body: {
-  //         "ssid": _ssidController.text.trim(),
-  //         "password": _passController.text.trim(),
-  //       },
-  //     ).timeout(const Duration(seconds: 8));
+    Future.delayed(const Duration(minutes: 2), () {
+      if (_isLoading && mounted) {
+        _statusSubscription?.cancel();
+        setState(() => _isLoading = false);
+        _showError("Setup timed out. Check device internet.");
+      }
+    });
+  }
 
-  //     if (response.statusCode == 200) {
-  //       // 2. Decode the response body to get device details
-  //       final Map<String, dynamic> data = jsonDecode(response.body);
-        
-  //       final String? deviceId = data["device_id"];
-  //       final String? deviceName = data["device_name"];
-
-  //       debugPrint("Received device details: $deviceId, $deviceName");
-        
-  //       // 3. Register with extracted details
-  //       await _registerToFirebase(deviceId, deviceName);
-  //     } else {
-  //       _showError("Hardware error: ${response.statusCode}");
-  //     }
-  //   } catch (e) {
-  //     // SUCCESS HACK: Connection drop often indicates hardware rebooting to connect to WiFi
-  //     debugPrint("Connection lost during reboot, finalizing registration: $e");
-      
-  //     // Register with nulls; dashboard will use defaults if details are missing
-  //     await _registerToFirebase(null, null); 
-  //   } finally {
-  //     if (mounted) setState(() => _isLoading = false);
-  //   }
-  // }
-  
-  // // --- STEP 3: Register Device in Cloud Firestore ---
-  Future<void> _registerToFirebase() async {
+  Future<void> _finalizeSetup() async {
+    _statusSubscription?.cancel();
     try {
       String uid = FirebaseAuth.instance.currentUser!.uid;
-
       await FirebaseFirestore.instance.collection('users').doc(uid).update({
         'hasCompletedSetup': true,
-        'device_id': _detectedDeviceId,
-        'device_name': _detectedDeviceName,
-        'device_list': FieldValue.arrayUnion([_detectedDeviceName]),
-        'last_setup': DateTime.now(),
       });
 
       if (mounted) {
         Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const UserDashboard()));
       }
     } catch (e) {
-      _showError("Cloud registration failed. Check your internet.");
-    } finally {
-      setState(() => _isLoading = false);
+      _showError("Final sync failed.");
     }
   }
 
-  // --- STEP 3: Register Device in Cloud Firestore ---
-  // Updated to accept nullable parameters from the hardware response
-  // Future<void> _registerToFirebase(String? deviceId, String? deviceName) async {
-  //   try {
-  //     String uid = FirebaseAuth.instance.currentUser!.uid;
+  void _showError(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.red));
+  }
 
-  //     // Use provided values or fallback to defaults if they are null
-  //     final finalId = deviceId ?? "WT-${DateTime.now().millisecondsSinceEpoch}";
-  //     final finalName = deviceName ?? "WingTrace v1";
-
-  //     await FirebaseFirestore.instance.collection('users').doc(uid).update({
-  //       'hasCompletedSetup': true,
-  //       'device_id': finalId,
-  //       'device_name': finalName,
-  //       'device_list': FieldValue.arrayUnion([finalName]),
-  //       'last_setup': DateTime.now(),
-  //     });
-
-  //     if (mounted) {
-  //       Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const UserDashboard()));
-  //     }
-  //   } catch (e) {
-  //     _showError("Cloud registration failed. Check your internet.");
-  //   }
-  // }
-    
-    void _showError(String msg) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.red));
-    }
-
-    @override
-    Widget build(BuildContext context) {
-      return Scaffold(
-        backgroundColor: const Color(0xFFFDFBE7),
-        appBar: AppBar(
-          title: const Text("Device Setup"),
-          backgroundColor: Colors.green,
-          foregroundColor: Colors.white,
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const UserDashboard())),
-              child: const Text("SKIP", style: TextStyle(color: Colors.white)),
-            )
-          ],
-        ),
-        body: Column(
-          children: [
-            _buildProgressIndicator(),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.all(25.0),
-                child: _buildCurrentStepUI(),
-              ),
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFFDFBE7),
+      appBar: AppBar(
+        title: const Text("Device Setup"),
+        backgroundColor: Colors.green,
+        foregroundColor: Colors.white,
+      ),
+      body: _isLoading 
+        ? Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const CircularProgressIndicator(color: Colors.green),
+                const SizedBox(height: 20),
+                const Text("Configuring WingTrace...", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                const SizedBox(height: 8),
+                Text(_currentStep == 1 ? "Waiting for Device to reach Cloud..." : "Talking to Device...", 
+                  textAlign: TextAlign.center, style: const TextStyle(color: Colors.grey)),
+              ],
             ),
-          ],
-        ),
-      );
-    }
+          )
+        : Column(
+            children: [
+              _buildProgressIndicator(),
+              Expanded(child: Padding(padding: const EdgeInsets.all(25.0), child: _buildCurrentStepUI())),
+            ],
+          ),
+    );
+  }
 
   Widget _buildProgressIndicator() {
     return LinearProgressIndicator(
-      value: (_currentStep + 1) / 3,
+      value: (_currentStep + 1) / 2,
       backgroundColor: Colors.green.withOpacity(0.2),
       valueColor: const AlwaysStoppedAnimation<Color>(Colors.green),
     );
   }
 
   Widget _buildCurrentStepUI() {
-    switch (_currentStep) {
-      case 0:
-        return _stepLayout(
-          icon: Icons.settings_input_component,
-          title: "Connect to Hardware",
-          desc: "1. Power on your WingTrace module.\n2. Go to WiFi Settings.\n3. Connect to 'WingTrace v1'.",
-          btnLabel: "VERIFY CONNECTION",
-          onPressed: _checkWifiConnection,
-        );
-      case 1:
-        return SingleChildScrollView(
-          child: Column(
-            children: [
-              const Icon(Icons.wifi_lock, size: 80, color: Colors.green),
-              const SizedBox(height: 20),
-              const Text("Provision Internet", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-              const Text("Enter your farm WiFi details so the hardware can connect to the cloud.", textAlign: TextAlign.center),
-              const SizedBox(height: 30),
-              TextField(controller: _ssidController, decoration: const InputDecoration(labelText: "Network Name (SSID)", border: OutlineInputBorder())),
-              const SizedBox(height: 15),
-              TextField(controller: _passController, obscureText: true, decoration: const InputDecoration(labelText: "Network Password", border: OutlineInputBorder())),
-              const SizedBox(height: 30),
-              _fullWidthButton("PROVISION DEVICE", _provisionHardware),
-            ],
-          ),
-        );
-      default:
-        return const Center(child: CircularProgressIndicator());
+    if (_currentStep == 0) {
+      return _stepLayout(
+        icon: Icons.settings_input_component,
+        title: "Connect to Hardware",
+        desc: "Power on WingTrace and connect your phone to its WiFi network.",
+        btnLabel: "VERIFY CONNECTION",
+        onPressed: _checkWifiConnection,
+      );
+    } else {
+      return SingleChildScrollView(
+        child: Column(
+          children: [
+            const Icon(Icons.wifi_lock, size: 80, color: Colors.green),
+            const SizedBox(height: 20),
+            const Text("Provision Internet", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            const Text("Enter your home WiFi details."),
+            const SizedBox(height: 30),
+            TextField(controller: _ssidController, decoration: const InputDecoration(labelText: "WiFi SSID", border: OutlineInputBorder())),
+            const SizedBox(height: 15),
+            TextField(controller: _passController, obscureText: true, decoration: const InputDecoration(labelText: "WiFi Password", border: OutlineInputBorder())),
+            const SizedBox(height: 30),
+            _fullWidthButton("PROVISION DEVICE", _provisionHardware),
+          ],
+        ),
+      );
     }
   }
 
@@ -300,7 +279,7 @@ class _DeviceSetupScreenState extends State<DeviceSetupScreen> {
       child: ElevatedButton(
         onPressed: _isLoading ? null : onPressed,
         style: ElevatedButton.styleFrom(backgroundColor: Colors.green, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15))),
-        child: _isLoading ? const CircularProgressIndicator(color: Colors.white) : Text(label, style: const TextStyle(fontSize: 16, color: Colors.white, fontWeight: FontWeight.bold)),
+        child: Text(label, style: const TextStyle(fontSize: 16, color: Colors.white, fontWeight: FontWeight.bold)),
       ),
     );
   }

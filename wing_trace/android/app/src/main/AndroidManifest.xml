@@ -14,7 +14,7 @@
         </intent>
     </queries>
     <application
-        android:label="wing_trace"
+        android:label="WingTrace"
         android:name="${applicationName}"
         android:icon="@mipmap/launcher_icon">
         <activity

@@ -1,11 +1,15 @@
-import 'dart:math'; // Required for Random()
+import 'dart:math';
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart'; 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_database/firebase_database.dart'; // 🔹 Required for weather stats
+import 'dart:convert';
 import 'dart:async';
-import 'package:animated_text_kit/animated_text_kit.dart'; 
+import 'package:animated_text_kit/animated_text_kit.dart';
+import 'package:http/http.dart' as http;
 
-import 'detection_screen.dart'; 
+// Screen Imports
+import 'detection_screen.dart';
 import 'history_screen.dart';
 import 'analytics_screen.dart';
 import 'settings_screen.dart';
@@ -15,6 +19,7 @@ import 'detection_count_screen.dart';
 import 'last_detected_screen.dart';
 import 'pest_chatbot_screen.dart';
 import 'device_setup_screen.dart';
+import 'audio_detection_screen.dart';
 
 class UserDashboard extends StatefulWidget {
   const UserDashboard({super.key});
@@ -24,10 +29,14 @@ class UserDashboard extends StatefulWidget {
 }
 
 class _UserDashboardState extends State<UserDashboard> {
-  bool _isLive = false; 
+  bool _isLive = false;
   final String _deviceName = "WingTrace v1";
   final User? _user = FirebaseAuth.instance.currentUser;
   Timer? _factTimer;
+
+  // Realtime Database Reference
+  final DatabaseReference _dbRef = FirebaseDatabase.instance.ref();
+  String? _realDeviceId; // Fetched from Firestore
 
   final List<String> _pestFacts = [
     "Only female mosquitoes bite; they need blood protein for their eggs.",
@@ -46,7 +55,9 @@ class _UserDashboardState extends State<UserDashboard> {
 
     _factTimer = Timer.periodic(const Duration(seconds: 20), (timer) {
       if (mounted) {
-        setState(() { _currentFact = (_pestFacts..shuffle()).first; });
+        setState(() {
+          _currentFact = (_pestFacts..shuffle()).first;
+        });
       }
     });
   }
@@ -59,13 +70,11 @@ class _UserDashboardState extends State<UserDashboard> {
 
   // --- LOGIC ---
 
-  // Helper to pick a random image from your 8 assets
   String _getRandomGhibliAsset() {
-    int index = Random().nextInt(8) + 1; // Generates 1 to 8
+    int index = Random().nextInt(8) + 1;
     return 'assets/profile_pics/p$index.png';
   }
 
-  // Logic to save the random choice to Firestore if the user doesn't have one yet
   Future<void> _assignDefaultProfilePic() async {
     if (_user == null) return;
     String randomPic = _getRandomGhibliAsset();
@@ -74,9 +83,41 @@ class _UserDashboardState extends State<UserDashboard> {
     });
   }
 
-  void _handleConnectTap(bool hasSetup) {
+  Future<void> _handleConnectTap(bool hasSetup) async {
     if (!hasSetup) {
       Navigator.push(context, MaterialPageRoute(builder: (_) => const DeviceSetupScreen()));
+      return;
+    }
+
+    if (_isLive) {
+      bool? confirm = await showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text("Disconnect Device?"),
+          content: const Text("This will stop live monitoring until the device reboots."),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("CANCEL")),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text("DISCONNECT", style: TextStyle(color: Colors.red)),
+            ),
+          ],
+        ),
+      );
+
+      if (confirm == true) {
+        final resp = await http.post(
+          Uri.parse("https://wingtrace-production.up.railway.app/disconnect"),
+          headers: {"Content-Type": "application/json"},
+          body: jsonEncode({
+            "deviceId": _realDeviceId ?? "WT12345678",
+            "userId": _user?.uid
+          }),
+        );
+        if (resp.statusCode == 200) {
+          setState(() => _isLive = false);
+        }
+      }
     } else {
       _showConnectionDialog();
     }
@@ -88,7 +129,7 @@ class _UserDashboardState extends State<UserDashboard> {
       barrierDismissible: false,
       builder: (BuildContext context) {
         return FutureBuilder(
-          future: Future.delayed(const Duration(seconds: 3)), 
+          future: Future.delayed(const Duration(seconds: 3)),
           builder: (context, snapshot) {
             bool isFound = snapshot.connectionState == ConnectionState.done;
             return Dialog(
@@ -153,18 +194,21 @@ class _UserDashboardState extends State<UserDashboard> {
         builder: (context, snapshot) {
           bool hasSetup = false;
           String name = "Guest User";
-          String profilePic = ""; // Default empty
+          String profilePic = "";
 
           if (snapshot.hasData && snapshot.data!.exists) {
             final data = snapshot.data!.data() as Map<String, dynamic>;
             hasSetup = data['hasCompletedSetup'] ?? false;
             name = data['name'] ?? "WingTrace User";
             
-            // Random assignment logic
+            // 🔹 Fetch real Device ID from Firestore
+            if (data.containsKey('devices') && (data['devices'] as List).isNotEmpty) {
+              _realDeviceId = data['devices'][0];
+            }
+
             if (data.containsKey('profile_pic') && data['profile_pic'] != null) {
               profilePic = data['profile_pic'];
             } else {
-              // If field missing, assign one in the background
               _assignDefaultProfilePic();
             }
 
@@ -183,6 +227,7 @@ class _UserDashboardState extends State<UserDashboard> {
                   padding: const EdgeInsets.symmetric(horizontal: 20),
                   child: Column(
                     children: [
+                      // 🔹 Connect Button
                       Align(
                         alignment: Alignment.centerRight,
                         child: Padding(
@@ -210,7 +255,8 @@ class _UserDashboardState extends State<UserDashboard> {
                       
                       _buildSummarySection(),
 
-                      if (_isLive) _buildEnvStats(),
+                      // 🔹 Real-time Weather Stats (RTDB)
+                      if (_isLive && _realDeviceId != null) _buildRTDBWeather(_realDeviceId!),
 
                       const SizedBox(height: 10),
                       _buildActionButtons(),
@@ -230,6 +276,84 @@ class _UserDashboardState extends State<UserDashboard> {
   }
 
   // --- SUB-WIDGETS ---
+
+  // 🔹 New Widget: Listen to RTDB weather node
+  // Widget _buildRTDBWeather(String deviceId) {
+  //   return StreamBuilder<DatabaseEvent>(
+  //     stream: _dbRef.child("devices/$deviceId/weather").onValue,
+  //     builder: (context, snapshot) {
+  //       String temp = "--";
+  //       String hum = "--";
+
+  //       if (snapshot.hasData && snapshot.data!.snapshot.value != null) {
+  //         final data = Map<dynamic, dynamic>.from(snapshot.data!.snapshot.value as Map);
+  //         temp = data['temperature']?.toString() ?? "--";
+  //         hum = data['humidity']?.toString() ?? "--";
+  //       }
+
+  //       return Padding(
+  //         padding: const EdgeInsets.symmetric(vertical: 15),
+  //         child: Row(
+  //           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+  //           children: [
+  //             _envStatItem(Icons.thermostat, "$temp°C", "Temperature"),
+  //             Container(height: 30, width: 1, color: Colors.green.withOpacity(0.3)),
+  //             _envStatItem(Icons.water_drop, "$hum%", "Humidity"),
+  //           ],
+  //         ),
+  //       );
+  //     },
+  //   );
+  // }
+  Widget _buildRTDBWeather(String deviceId) {
+  // Use the exact path from your screenshot: devices/WT12345678/weather
+    return StreamBuilder<DatabaseEvent>(
+      stream: _dbRef.child("devices/$deviceId/weather").onValue,
+      builder: (context, snapshot) {
+        // 1. Check for basic connection/stream errors
+        if (snapshot.hasError) {
+          return _envStatItem(Icons.error_outline, "Error", "Stream Failed");
+        }
+
+        // 2. While waiting for the very first bit of data
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return _envStatItem(Icons.sync, "...", "Connecting");
+        }
+
+        // 3. Process the data
+        String temp = "--";
+        String hum = "--";
+
+        if (snapshot.hasData && snapshot.data!.snapshot.value != null) {
+          try {
+            // Cast the value to a Map
+            final data = Map<dynamic, dynamic>.from(snapshot.data!.snapshot.value as Map);
+            
+            // Verify keys match your RTDB: 'temperature' and 'humidity'
+            temp = data['temperature']?.toString() ?? "--";
+            hum = data['humidity']?.toString() ?? "--";
+          } catch (e) {
+            debugPrint("Data Parsing Error: $e");
+          }
+        } else {
+          // This means the path 'devices/$deviceId/weather' exists but is empty
+          return _envStatItem(Icons.cloud_off, "No Data", "Check Hardware");
+        }
+
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 15),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              _envStatItem(Icons.thermostat, "$temp°C", "Temperature"),
+              Container(height: 30, width: 1, color: Colors.green.withOpacity(0.3)),
+              _envStatItem(Icons.water_drop, "$hum%", "Humidity"),
+            ],
+          ),
+        );
+      },
+    );
+  }
 
   Widget _buildHeader(String name, String profilePicAsset) {
     return Stack(
@@ -251,13 +375,8 @@ class _UserDashboardState extends State<UserDashboard> {
                 child: CircleAvatar(
                   radius: 42,
                   backgroundColor: Colors.grey[200],
-                  // Logic: If Firestore hasn't updated yet, show a generic icon, otherwise show the Ghibli asset
-                  backgroundImage: profilePicAsset.isNotEmpty 
-                    ? AssetImage(profilePicAsset) 
-                    : null,
-                  child: profilePicAsset.isEmpty 
-                    ? const Icon(Icons.person, size: 50, color: Colors.grey) 
-                    : null,
+                  backgroundImage: profilePicAsset.isNotEmpty ? AssetImage(profilePicAsset) : null,
+                  child: profilePicAsset.isEmpty ? const Icon(Icons.person, size: 50, color: Colors.grey) : null,
                 ),
               ),
               const SizedBox(height: 10),
@@ -285,27 +404,26 @@ class _UserDashboardState extends State<UserDashboard> {
     );
   }
 
-  Widget _buildEnvStats() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 15),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: [
-          _envStatItem(Icons.thermostat, "28°C", "Temperature"),
-          Container(height: 30, width: 1, color: Colors.green.withOpacity(0.3)),
-          _envStatItem(Icons.water_drop, "65%", "Humidity"),
-        ],
-      ),
-    );
-  }
-
   Widget _buildActionButtons() {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceAround,
+    return Column(
       children: [
-        _actionButton('Start\nDetection', Icons.biotech, const DetectionScreen()),
-        _actionButton('View\nHistory', Icons.history_edu, const HistoryScreen()),
-        _actionButton('Analytics', Icons.insights, const AnalyticsScreen()),
+        // First Row: Image and Audio Detection
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            _actionButton('Image\nDetection', Icons.camera_alt, const DetectionScreen()),
+            _actionButton('Audio\nDetection', Icons.mic, const AudioDetectionScreen()),
+          ],
+        ),
+        const SizedBox(height: 20), // Spacing between the two rows
+        // Second Row: History and Analytics
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            _actionButton('View\nHistory', Icons.history_edu, const HistoryScreen()),
+            _actionButton('Analytics', Icons.insights, const AnalyticsScreen()),
+          ],
+        ),
       ],
     );
   }

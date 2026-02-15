@@ -1,0 +1,422 @@
+import wave
+import threading
+from datetime import datetime, timedelta, timezone
+from flask import Flask, request, jsonify
+import firebase_admin
+from firebase_admin import credentials, db as rtdb
+import os, json, time
+from firebase_admin import firestore
+import uuid
+
+app = Flask(__name__)
+
+# firebase setup
+firebase_key = json.loads(os.environ["FIREBASE_KEY"])
+
+cred = credentials.Certificate(firebase_key)
+
+firebase_admin.initialize_app(cred, {
+    "databaseURL": "https://wingtrace-ead16-default-rtdb.firebaseio.com/"
+})
+
+fs = firestore.client()   # Firestore client
+
+
+# ===============================
+# CONFIG (Railway safe)
+# ===============================
+
+# Railway provides PORT via environment variable
+PORT = int(os.environ.get("PORT", 5000))
+
+# Persistent volume path (Railway-safe)
+AUDIO_DIR = os.environ.get("AUDIO_DIR", "recordings")
+os.makedirs(AUDIO_DIR, exist_ok=True)
+
+# Audio config (ESP32 must match)
+SAMPLE_RATE = 16000
+CHANNELS = 1
+SAMPLE_WIDTH = 2  # 16-bit PCM
+
+# ===============================
+# GLOBAL STATE (in-memory)
+# ===============================
+
+audio_buffer = bytearray()
+recording = False
+
+devices = {}           # device status & weather
+device_commands = {}   # pending commands
+
+# ===============================
+# DEVICE HEARTBEAT
+# ===============================
+
+@app.route('/alive', methods=['POST'])
+def alive():
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "No JSON received"}), 400
+
+    device_id = data.get("deviceId", "").strip()
+    if not device_id:
+        return jsonify({"error": "deviceId missing"}), 400
+
+    devices.setdefault(device_id, {})
+    devices[device_id].update({
+        "status": "ONLINE",
+        "last_seen": int(time.time()),
+        "user_connected": True
+    })
+
+    print(f"[ALIVE] {device_id} ONLINE")
+    return jsonify({"message": "ALIVE received"}), 200
+
+
+@app.route('/devices', methods=['GET'])
+def list_devices():
+    return jsonify(devices), 200
+
+# ===============================
+# DEVICE STATUS
+# ===============================
+
+@app.route('/status', methods=['POST'])
+def update_status():
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "No JSON"}), 400
+
+    device_id = data.get("deviceId", "").strip()
+    if not device_id:
+        return jsonify({"error": "deviceId missing"}), 400
+
+    status_data = {
+        "isOnline": data.get("isOnline", True),
+        "lastSeen": int(time.time()),   # timestamp
+        "batteryLevel": data.get("batteryLevel"),
+        "isReset": data.get("isReset", False),
+        "networkStrength": data.get("networkStrength")
+    }
+
+    fs.reference(f"devices/{device_id}/status").set(status_data)
+
+    return jsonify({
+        "message": "status stored",
+        "status": status_data
+    }), 200
+
+@app.route('/status/<device_id>', methods=['GET'])
+def get_status(device_id):
+    ref = fs.reference(f"devices/{device_id.strip()}/status")
+    data = ref.get()
+
+    if not data:
+        return jsonify({"error": "No status data"}), 404
+
+    return jsonify(data), 200
+
+
+# ===============================
+# WEATHER DATA
+# ===============================
+
+@app.route('/weather', methods=['POST'])
+def weather():
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "No JSON"}), 400
+
+    device_id = data.get("deviceId", "").strip()
+    if not device_id:
+        return jsonify({"error": "deviceId missing"}), 400
+
+    timestamp = int(time.time())
+
+    weather_data = {
+        "temperature": data.get("temperature"),
+        "humidity": data.get("humidity"),
+        "updated_at": timestamp
+    }
+
+    fs.reference(f"devices/{device_id}/weather").set(weather_data)
+
+    print(f"[WEATHER] {device_id} → {weather_data}")
+
+    return jsonify({"message": "weather stored in firebase"}), 200
+
+
+@app.route('/weather/<device_id>', methods=['GET'])
+def get_weather(device_id):
+    ref = fs.reference(f"devices/{device_id.strip()}/weather")
+    data = ref.get()
+
+    if not data:
+        return jsonify({"error": "No data"}), 404
+
+    return jsonify(data), 200
+
+
+
+# ===============================
+# CONNECTION CONTROL
+# ===============================
+@app.route("/startSetup", methods=["POST"])
+def start_setup():
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "Invalid JSON"}), 400
+    owner_id = data.get("userId")
+    
+
+    if not owner_id:
+        return jsonify({"error": "Missing userId"}), 400
+
+    setup_token =  uuid.uuid4().hex
+    now = datetime.now(timezone.utc)
+
+    fs.collection("setupSessions").document(setup_token).set({
+        "setupToken": setup_token,
+        "ownerId": owner_id,
+        "deviceId": None,
+        "status": "WAITING",
+        "createdAt": firestore.SERVER_TIMESTAMP,
+        "expiresAt": now + timedelta(minutes=5)
+    })
+
+    return jsonify({
+        "setupToken": setup_token,
+        "expiresIn": 300
+    }), 200
+
+def expire_token_if_needed(token_ref, token_data):
+    if token_data.get("status") != "WAITING":
+        return False
+
+    expires_at = token_data.get("expiresAt")
+    if not expires_at:
+        return False
+
+    now = datetime.now(timezone.utc)
+
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+    if expires_at < now:
+        token_ref.update({"status": "EXPIRED"})
+        return True
+
+    return False
+
+@app.route("/onBoard", methods=["POST"])
+def onBoard_device():
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "Invalid JSON"}), 400
+
+
+    device_id  = data.get("deviceId")
+    owner_id   = data.get("userId")
+    setupToken = data.get("setupToken")
+
+    if not device_id or not owner_id or not setupToken:
+        return jsonify({"error": "Missing fields"}), 400
+
+    # 🔹 Validate setup token
+    token_ref = fs.collection("setupSessions").document(setupToken)
+    token_doc = token_ref.get()
+
+    if not token_doc.exists:
+        return jsonify({"error": "Invalid setup token"}), 403
+
+    token_data = token_doc.to_dict()
+
+    if expire_token_if_needed(token_ref, token_data):
+        return jsonify({"error": "Setup token expired"}), 403
+
+    if token_data["status"] != "WAITING":
+        return jsonify({"error": "Token already used"}), 403
+
+    if token_data["ownerId"] != owner_id:
+        return jsonify({"error": "Token-owner mismatch"}), 403
+
+    # 🔹 Validate device
+    device_ref = fs.collection("devices").document(device_id)
+    device_doc = device_ref.get()
+
+    if not device_doc.exists:
+        return jsonify({"error": "Unknown device"}), 404
+
+    if device_doc.to_dict().get("ownerId"):
+        return jsonify({"error": "Device already owned"}), 403
+
+    # 🔹 Assign ownership
+    device_ref.set({
+        "ownerId": owner_id,
+        "status": "CONNECTED"
+    }, merge=True)
+
+    # 🔹 Update user
+    fs.collection("users").document(owner_id).set({
+        "devices": firestore.ArrayUnion([device_id])
+    }, merge=True)
+
+    # 🔹 Mark token as USED
+    token_ref.update({
+        "status": "USED",
+        "deviceId": device_id
+    })
+
+    print(f"[ONBOARD] {device_id} → {owner_id}")
+
+    return jsonify({
+        "status": "SUCCESS",
+        "deviceId": device_id
+    }), 200
+
+
+@app.route('/disconnect', methods=['POST'])
+def disconnect():
+    data = request.get_json(silent=True)
+    device_id = data.get("deviceId", "").strip() if data else ""
+
+    if not device_id or device_id not in devices:
+        return jsonify({"error": "Invalid deviceId"}), 400
+
+    devices[device_id]["status"] = "OFFLINE"
+    devices[device_id]["user_connected"] = False
+
+    print(f"[DISCONNECT] {device_id}")
+    return jsonify({"message": "Device disconnected"}), 200
+
+
+# ===============================
+# COMMAND CHANNEL
+# ===============================
+
+@app.route("/reset", methods=["POST"])
+def reset_device():
+    data = request.get_json(silent=True)
+    device_id = data.get("deviceId", "").strip() if data else ""
+
+    if not device_id:
+        return jsonify({"error": "deviceId required"}), 400
+
+    device_commands[device_id] = "RESET"
+    print(f"[RESET] queued for {device_id}")
+    return jsonify({"status": "RESET queued"}), 200
+
+
+@app.route("/command", methods=["GET"])
+def get_command():
+    device_id = request.args.get("deviceId", "").strip()
+    cmd = device_commands.get(device_id, "NO_COMMAND")
+
+    if cmd != "NO_COMMAND":
+        device_commands[device_id] = "NO_COMMAND"
+        print(f"[CMD SENT] {device_id} → {cmd}")
+
+    return cmd, 200
+
+# ===============================
+# ADMIN CONTROL
+# ===============================
+# ADMIN: Manufacture a new device and add information to database
+@app.route("/addDevice", methods=["POST"])
+def add_device():
+    data = request.get_json(silent=True)
+
+    if not data:
+        return jsonify({"error": "Invalid JSON"}), 400
+
+    device_id = data.get("deviceId")
+    device_name = data.get("deviceName")
+    firmware = data.get("firmwareVersion")
+    createdAt = data.get("createdAt")
+
+    if not device_id or not device_name or not firmware:
+        return jsonify({"error": "Missing fields"}), 400
+
+    device_ref = fs.collection("devices").document(device_id)
+
+    # Prevent overwriting existing device
+    if device_ref.get().exists:
+        return jsonify({"error": "Device already exists"}), 409
+
+    device_ref.set({
+        "deviceName": device_name,
+        "firmwareVersion": firmware,
+        "status": "DISCONNECTED",
+        "createdAt": createdAt,
+    })
+
+    print(f"[ADD DEVICE] {device_id} registered")
+
+    return jsonify({
+        "status": "SUCCESS",
+        "deviceId": device_id
+    }), 201
+
+# ===============================
+# AUDIO STREAMING
+# ===============================
+
+@app.route('/audio', methods=['POST'])
+def update_audio():
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "No JSON"}), 400
+
+    device_id = data.get("deviceId", "").strip()
+    if not device_id:
+        return jsonify({"error": "deviceId missing"}), 400
+
+    audio_data = {
+        "isRecording": data.get("isRecording", False),
+        "recentRecordings": data.get("recentRecordings", [])
+    }
+
+    fs.reference(f"devices/{device_id}/audio").set(audio_data)
+
+    return jsonify({
+        "message": "audio metadata stored",
+        "audio": audio_data
+    }), 200
+
+@app.route('/audio/<device_id>', methods=['GET'])
+def get_audio(device_id):
+    ref = fs.reference(f"devices/{device_id.strip()}/audio")
+    data = ref.get()
+
+    if not data:
+        return jsonify({"error": "No audio data"}), 404
+
+    return jsonify(data), 200
+
+
+# ===============================
+# OFFLINE CHECKER THREAD
+# ===============================
+
+ALIVE_TIMEOUT = 5 * 60
+
+def offline_checker():
+    while True:
+        now = int(time.time())
+        for device_id, info in list(devices.items()):
+            if info.get("user_connected"):
+                last_seen = info.get("last_seen", 0)
+                if now - last_seen > ALIVE_TIMEOUT:
+                    if info.get("status") != "OFFLINE":
+                        info["status"] = "OFFLINE"
+                        print(f"[OFFLINE] {device_id}")
+        time.sleep(60)
+
+
+# ===============================
+# ENTRY POINT
+# ===============================
+
+if __name__ == '__main__':
+    threading.Thread(target=offline_checker, daemon=True).start()
+    app.run(host="0.0.0.0", port=PORT)

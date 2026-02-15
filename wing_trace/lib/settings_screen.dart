@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 import 'report_bug_screen.dart';
 import 'device_setup_screen.dart';
 
-class SettingsScreen extends StatelessWidget {
+class SettingsScreen extends StatefulWidget {
   final bool isConnected;
   final String deviceName;
 
@@ -14,131 +16,20 @@ class SettingsScreen extends StatelessWidget {
     required this.deviceName,
   });
 
-  // Logic to completely remove the hardware link
-  Future<void> _removeHardware(BuildContext context) async {
-    try {
-      String uid = FirebaseAuth.instance.currentUser!.uid;
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
 
-      // Reset the setup flag in Firestore
-      await FirebaseFirestore.instance.collection('users').doc(uid).update({
-        'hasCompletedSetup': false,
-      });
-
-      if (context.mounted) {
-        Navigator.pop(context); // Close the dialog
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Hardware removed. You will need to setup again.")),
-        );
-        Navigator.pop(context); // Go back to Dashboard
-      }
-    } catch (e) {
-      debugPrint("Error removing hardware: $e");
-    }
-  }
-
-  void _showRemoveConfirmation(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("Remove Hardware?"),
-        content: const Text(
-            "This will completely disconnect the device. You will have to go through the setup process again to reconnect."),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text("CANCEL")),
-          TextButton(
-            onPressed: () => _removeHardware(context),
-            child: const Text("REMOVE", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // --- HELP & DOCUMENTATION BOTTOM SHEET ---
-  void _showHelpBottomSheet(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        height: MediaQuery.of(context).size.height * 0.8,
-        decoration: const BoxDecoration(
-          color: Color(0xFFFDFBE7),
-          borderRadius: BorderRadius.vertical(top: Radius.circular(25)),
+class _SettingsScreenState extends State<SettingsScreen> {
+  // --- SUB-SCREEN: DEVICE DETAILS ---
+  void _navigateToDetails(BuildContext context, String deviceId) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => DeviceDetailsScreen(
+          deviceId: deviceId,
+          initialIsOnline: widget.isConnected,
         ),
-        child: Column(
-          children: [
-            const SizedBox(height: 12),
-            Container(
-                width: 50,
-                height: 5,
-                decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(10))),
-            const Padding(
-              padding: EdgeInsets.all(20.0),
-              child: Text("WingTrace User Guide",
-                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.green)),
-            ),
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                children: [
-                  _helpSection("1. Hardware Setup", [
-                    "Power the WingTrace module using a 5V adapter.",
-                    "Ensure your phone WiFi is connected to 'WingTrace_V1'.",
-                    "Return to the app and use the 'Setup Device' button.",
-                  ]),
-                  _helpSection("2. Internet Provisioning", [
-                    "Enter your home/farm WiFi SSID and Password in the Setup screen.",
-                    "The app will securely send these details to the hardware (192.168.4.1/save).",
-                    "The hardware will reboot and link to the cloud automatically.",
-                  ]),
-                  _helpSection("3. Dashboard & Monitoring", [
-                    "LIVE Status: Indicates your app is synchronized with the hardware.",
-                    "Detection Count: Real-time update of pests identified via AI.",
-                    "Env Stats: Shows live Temperature and Humidity from the field sensors.",
-                  ]),
-                  _helpSection("4. Troubleshooting", [
-                    "WiFi not found? Reset the hardware power supply.",
-                    "Connection failed? Ensure your phone is connected to the 'WingTrace_V1' network before provisioning.",
-                    "For deep technical issues, use 'Report a Bug' to contact the team.",
-                  ]),
-                  const SizedBox(height: 40),
-                  const Center(
-                    child: Text(
-                      "Developed by Jessin, Alwin, Akhil & Edwin\nGuided by Prof. Anu Bonia Francis",
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 12, color: Colors.grey, fontStyle: FontStyle.italic),
-                    ),
-                  ),
-                  const SizedBox(height: 40),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _helpSection(String title, List<String> steps) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 25),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
-          const SizedBox(height: 10),
-          ...steps.map((step) => Padding(
-                padding: const EdgeInsets.only(bottom: 5),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text("• ", style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
-                    Expanded(child: Text(step, style: const TextStyle(color: Colors.black54, height: 1.4))),
-                  ],
-                ),
-              )),
-        ],
       ),
     );
   }
@@ -156,47 +47,54 @@ class SettingsScreen extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 15),
         children: [
-          _sectionHeader(context, "Hardware Information"),
-          if (isConnected)
-            Column(
-              children: [
-                _buildHardwareCard(context),
-                const SizedBox(height: 10),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: () => _showRemoveConfirmation(context),
-                    icon: const Icon(Icons.link_off, color: Colors.red),
-                    label: const Text("DISCONNECT & REMOVE DEVICE", style: TextStyle(color: Colors.red)),
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: Colors.red),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                    ),
-                  ),
-                ),
-              ],
-            )
-          else
-            _buildEmptyState(context, "No WingTrace device connected."),
+          _sectionHeader("Hardware Information"),
+          
+          // StreamBuilder ensures the device stays visible if owned
+          StreamBuilder<DocumentSnapshot>(
+            stream: FirebaseFirestore.instance
+                .collection('users')
+                .doc(FirebaseAuth.instance.currentUser?.uid)
+                .snapshots(),
+            builder: (context, snapshot) {
+              if (!snapshot.hasData || !snapshot.data!.exists) return const SizedBox();
+              
+              final data = snapshot.data!.data() as Map<String, dynamic>;
+              final hasSetup = data['hasCompletedSetup'] ?? false;
+              final devices = data['devices'] as List<dynamic>? ?? [];
+
+              if (hasSetup && devices.isNotEmpty) {
+                final deviceId = devices[0].toString();
+                return GestureDetector(
+                  onTap: () => _navigateToDetails(context, deviceId),
+                  child: _buildHardwareCard(deviceId),
+                );
+              } else {
+                return _buildEmptyState(context, "No WingTrace device connected.");
+              }
+            },
+          ),
+
           const SizedBox(height: 20),
-          _sectionHeader(context, "Software & App"),
+          _sectionHeader("Software & App"),
           _buildListTile(Icons.info_outline, "Software Version", "v1.0.4-stable"),
           _buildListTile(Icons.update, "Check for Updates", "Up to date", onTap: () => _showUpdateDialog(context)),
           _buildListTile(Icons.security, "Privacy Policy", "Data & Security", onTap: () => _showPrivacyPolicy(context)),
+          
           const SizedBox(height: 20),
-          _sectionHeader(context, "About WingTrace"),
+          _sectionHeader("About WingTrace"),
           _buildListTile(Icons.group, "About Us", "Learn about the project", onTap: () => _showAboutUs(context)),
           _buildListTile(Icons.help_center_outlined, "Help & Documentation", "Setup & Troubleshooting guide",
               onTap: () => _showHelpBottomSheet(context)),
           _buildListTile(Icons.bug_report, "Report a Bug", "Help us improve", onTap: () {
             Navigator.push(context, MaterialPageRoute(builder: (context) => const ReportBugScreen()));
           }),
+          
           const SizedBox(height: 40),
-          Center(
+          const Center(
             child: Text(
               "WingTrace Mobile Application\nDeveloped for Final Year Project 2026",
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey[600], fontSize: 12),
+              style: TextStyle(color: Colors.grey, fontSize: 12),
             ),
           ),
           const SizedBox(height: 20),
@@ -205,7 +103,9 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
-  Widget _sectionHeader(BuildContext context, String title) {
+  // --- UI COMPONENTS ---
+
+  Widget _sectionHeader(String title) {
     return Padding(
       padding: const EdgeInsets.only(left: 10, bottom: 8),
       child: Text(
@@ -215,7 +115,7 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildHardwareCard(BuildContext context) {
+  Widget _buildHardwareCard(String id) {
     return Container(
       padding: const EdgeInsets.all(15),
       decoration: BoxDecoration(
@@ -223,63 +123,29 @@ class SettingsScreen extends StatelessWidget {
         borderRadius: BorderRadius.circular(20),
         boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10)],
       ),
-      child: Column(
+      child: Row(
         children: [
-          Row(
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(10),
-                child: Image.asset(
-                  'assets/device_image.png',
-                  width: 80,
-                  height: 80,
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) =>
-                      const Icon(Icons.developer_board, size: 50, color: Colors.grey),
-                ),
-              ),
-              const SizedBox(width: 15),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(deviceName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-                    const SizedBox(height: 4),
-                    const Text("Serial: WT-2026-X11", style: TextStyle(color: Colors.grey, fontSize: 12)),
-                    const SizedBox(height: 4),
-                    const Row(
-                      children: [
-                        Icon(Icons.battery_5_bar, color: Colors.green, size: 16),
-                        SizedBox(width: 5),
-                        Text("85% Charge", style: TextStyle(color: Colors.green, fontSize: 12)),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ],
+          ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: Image.asset(
+              'assets/device_image.png',
+              width: 60, height: 60, fit: BoxFit.cover,
+              errorBuilder: (context, error, stackTrace) => const Icon(Icons.developer_board, size: 40, color: Colors.grey),
+            ),
           ),
-          const Divider(height: 30),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              _hwStat(Icons.wifi, "Strong", "Signal"),
-              _hwStat(Icons.thermostat, "28°C", "Temp"),
-              _hwStat(Icons.storage, "2.4 GB", "SD Card"),
-            ],
+          const SizedBox(width: 15),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(id, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                const Text("Tap to view details & manage", style: TextStyle(color: Colors.grey, fontSize: 12)),
+              ],
+            ),
           ),
+          const Icon(Icons.chevron_right, color: Colors.green),
         ],
       ),
-    );
-  }
-
-  Widget _hwStat(IconData icon, String val, String label) {
-    return Column(
-      children: [
-        Icon(icon, size: 20, color: Colors.grey),
-        Text(val, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-        Text(label, style: const TextStyle(color: Colors.grey, fontSize: 10)),
-      ],
     );
   }
 
@@ -287,8 +153,7 @@ class SettingsScreen extends StatelessWidget {
     return Card(
       elevation: 0,
       margin: const EdgeInsets.symmetric(vertical: 4),
-      shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(15), side: BorderSide(color: Colors.green.withOpacity(0.2))),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15), side: BorderSide(color: Colors.green.withOpacity(0.1))),
       child: ListTile(
         leading: Icon(icon, color: Colors.green),
         title: Text(title, style: const TextStyle(fontWeight: FontWeight.w500)),
@@ -302,19 +167,13 @@ class SettingsScreen extends StatelessWidget {
   Widget _buildEmptyState(BuildContext context, String msg) {
     return Container(
       padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border.all(color: Colors.grey.withOpacity(0.1)),
-        borderRadius: BorderRadius.circular(15),
-      ),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(15)),
       child: Column(
         children: [
           Text(msg, style: const TextStyle(color: Colors.grey)),
           const SizedBox(height: 15),
           ElevatedButton.icon(
-            onPressed: () {
-              Navigator.push(context, MaterialPageRoute(builder: (context) => const DeviceSetupScreen()));
-            },
+            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const DeviceSetupScreen())),
             icon: const Icon(Icons.add, color: Colors.white),
             label: const Text("CONNECT NEW DEVICE", style: TextStyle(color: Colors.white)),
             style: ElevatedButton.styleFrom(backgroundColor: Colors.green, shape: const StadiumBorder()),
@@ -324,95 +183,177 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
-  void _showPrivacyPolicy(BuildContext context) {
-    showDialog(
+  // --- DIALOGS & HELPERS ---
+
+  void _showHelpBottomSheet(BuildContext context) {
+    showModalBottomSheet(
       context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Row(
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        height: MediaQuery.of(context).size.height * 0.7,
+        decoration: const BoxDecoration(color: Color(0xFFFDFBE7), borderRadius: BorderRadius.vertical(top: Radius.circular(25))),
+        child: Column(
           children: [
-            Icon(Icons.security, color: Colors.green),
-            SizedBox(width: 10),
-            Text("Privacy Policy"),
+            const SizedBox(height: 12),
+            Container(width: 50, height: 5, decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(10))),
+            const Padding(padding: EdgeInsets.all(20.0), child: Text("WingTrace User Guide", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.green))),
+            const Expanded(child: Center(child: Text("Guide Content..."))),
           ],
         ),
-        content: const SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text("Data Collection", style: TextStyle(fontWeight: FontWeight.bold)),
-              SizedBox(height: 5),
-              Text("WingTrace collect pest detection data, location for mapping, and device health stats.",
-                  style: TextStyle(fontSize: 13)),
-              SizedBox(height: 15),
-              Text("User Privacy", style: TextStyle(fontWeight: FontWeight.bold)),
-              SizedBox(height: 5),
-              Text("Agricultural insights are anonymized for research purposes.", style: TextStyle(fontSize: 13)),
-              SizedBox(height: 15),
-              Text("Storage", style: TextStyle(fontWeight: FontWeight.bold)),
-              SizedBox(height: 5),
-              Text("Images processed by the AI are stored locally and on secured cloud servers.",
-                  style: TextStyle(fontSize: 13)),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("CLOSE", style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
-          )
-        ],
       ),
     );
   }
 
   void _showUpdateDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("Check Updates"),
-        content: const Text("Your WingTrace software and firmware are currently up to date."),
-        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text("OK"))],
+    showDialog(context: context, builder: (context) => AlertDialog(title: const Text("Update"), content: const Text("Firmware is up to date."), actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text("OK"))]));
+  }
+
+  void _showPrivacyPolicy(BuildContext context) {
+    showDialog(context: context, builder: (context) => AlertDialog(title: const Text("Privacy"), content: const Text("Data collected for AI research."), actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text("CLOSE"))]));
+  }
+
+  void _showAboutUs(BuildContext context) {
+    showAboutDialog(context: context, applicationName: "WingTrace", applicationVersion: "1.0.4", applicationLegalese: "© 2026 WingTrace Team");
+  }
+}
+
+// --- NEW SCREEN: DEVICE DETAILS & MANAGEMENT ---
+
+class DeviceDetailsScreen extends StatefulWidget {
+  final String deviceId;
+  final bool initialIsOnline;
+
+  const DeviceDetailsScreen({super.key, required this.deviceId, required this.initialIsOnline});
+
+  @override
+  State<DeviceDetailsScreen> createState() => _DeviceDetailsScreenState();
+}
+
+class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
+  late bool _isOnline;
+  bool _isLoading = false;
+  final String serverUrl = "https://wingtrace-production.up.railway.app";
+
+  @override
+  void initState() {
+    super.initState();
+    _isOnline = widget.initialIsOnline;
+  }
+
+  Future<void> _handleDisconnect() async {
+    setState(() => _isLoading = true);
+    try {
+      final response = await http.post(
+        Uri.parse("$serverUrl/disconnect"),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({
+          "deviceId": widget.deviceId,
+          "userId": FirebaseAuth.instance.currentUser?.uid
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        setState(() => _isOnline = false);
+        _showSnackBar("Device disconnected successfully.");
+      } else {
+        _showSnackBar("Failed: ${jsonDecode(response.body)['error']}");
+      }
+    } catch (e) {
+      _showSnackBar("Error connecting to server.");
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _handleReset() async {
+    setState(() => _isLoading = true);
+    try {
+      final response = await http.post(
+        Uri.parse("$serverUrl/reset"),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({
+          "deviceId": widget.deviceId,
+          "userId": FirebaseAuth.instance.currentUser?.uid
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        // Remove from Firestore
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(FirebaseAuth.instance.currentUser?.uid)
+            .update({
+          'hasCompletedSetup': false,
+          'devices': FieldValue.arrayRemove([widget.deviceId])
+        });
+        if (mounted) Navigator.pop(context);
+      } else {
+        _showSnackBar("Reset Failed: ${jsonDecode(response.body)['error']}");
+      }
+    } catch (e) {
+      _showSnackBar("Reset Error: $e");
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  void _showSnackBar(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFFDFBE7),
+      appBar: AppBar(title: const Text("Device Management"), backgroundColor: Colors.green),
+      body: Padding(
+        padding: const EdgeInsets.all(20.0),
+        child: Column(
+          children: [
+            const Icon(Icons.developer_board, size: 80, color: Colors.green),
+            const SizedBox(height: 20),
+            Text(widget.deviceId, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 10),
+            Text("Status: ${_isOnline ? "CONNECTED" : "DISCONNECTED"}", 
+                style: TextStyle(color: _isOnline ? Colors.green : Colors.red, fontWeight: FontWeight.w600)),
+            const Divider(height: 40),
+            
+            _isLoading ? const CircularProgressIndicator() : Column(
+              children: [
+                _actionTile(
+                  _isOnline ? Icons.link_off : Icons.link,
+                  _isOnline ? "Disconnect Device" : "Connect Device",
+                  "Toggle server link status",
+                  _isOnline ? _handleDisconnect : null, // Re-connect logic would go here
+                  color: _isOnline ? Colors.orange : Colors.grey,
+                ),
+                const SizedBox(height: 15),
+                _actionTile(
+                  Icons.restart_alt,
+                  "Reset Hardware",
+                  "Wipe ownership and factory reset",
+                  _handleReset,
+                  color: Colors.red,
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  void _showAboutUs(BuildContext context) {
-    showAboutDialog(
-      context: context,
-      applicationName: "WingTrace",
-      applicationVersion: "1.0.4",
-      applicationIcon: ClipRRect(
-        borderRadius: BorderRadius.circular(10),
-        child: Image.asset(
-          'assets/logo.png', // Ensure this matches your logo filename
-          width: 60,
-          height: 60,
-          fit: BoxFit.contain,
-          errorBuilder: (context, error, stackTrace) => const Icon(Icons.bug_report, color: Colors.green, size: 40),
-        ),
+  Widget _actionTile(IconData icon, String title, String sub, VoidCallback? onTap, {Color color = Colors.green}) {
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15), side: BorderSide(color: color.withOpacity(0.3))),
+      child: ListTile(
+        leading: CircleAvatar(backgroundColor: color.withOpacity(0.1), child: Icon(icon, color: color)),
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
+        subtitle: Text(sub, style: const TextStyle(fontSize: 12)),
+        onTap: onTap,
       ),
-      applicationLegalese: "© 2026 WingTrace Team",
-      children: [
-        const SizedBox(height: 15),
-        const Text("Project Significance:", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.green)),
-        const Text(
-          "This is a Major Project developed for the Final Year Curriculum 2025-2026. WingTrace is an automated mosquito and pest detection system using hardware-integrated AI.",
-        ),
-        const SizedBox(height: 15),
-        const Text("Development Team:", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.green)),
-        const Text("• Jessin Sunny (Hardware Lead)"),
-        const Text("• Alwin Philip (AI/ML Developer)"),
-        const Text("• Akhil S Nair (App Developer)"),
-        const Text("• Edwin Varkey (Research Lead and Backend Developer)"),
-        const SizedBox(height: 10),
-        const Divider(),
-        const Text(
-          "Guided by: Prof. Anu Bonia Francis, Department of Computer Science, RIT Kottayam.",
-          style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic),
-        ),
-      ],
     );
   }
 }

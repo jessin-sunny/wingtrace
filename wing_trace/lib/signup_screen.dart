@@ -71,13 +71,29 @@ class _SignUpPageState extends State<SignUpPage> {
     setState(() => _isLoading = true);
 
     String dbRole = (_selectedRole == 'Agricultural/Health Officer') ? 'officer' : 'farmer';
-
+    DateTime now = DateTime.now();
     // 6. Call Firebase
+    // String? error = await _authService.signUp(
+    //   email,
+    //   _passwordController.text.trim(),
+    //   _nameController.text.trim(),
+    //   dbRole 
+    // );
+    Map<String, dynamic> userMap = {
+      "name": _nameController.text.trim(),
+      "emailid": _emailController.text.trim(),
+      "phoneno": "+91$phone", // Added prefix as per your requirement
+      "role": dbRole,
+      "profilePic": "assets/profile_pics/p1.png", // Default avatar
+      "devices": [], // Empty array for new user
+      "lastLogin": now, // Firestore handles DateTime objects or Strings
+      "createdAt": now,
+      "updatedAt": now,
+    };
     String? error = await _authService.signUp(
-      email,
+      userMap["emailid"],
       _passwordController.text.trim(),
-      _nameController.text.trim(),
-      dbRole 
+      userMap // Passing the map to match the new structure
     );
 
     if (!mounted) return;
