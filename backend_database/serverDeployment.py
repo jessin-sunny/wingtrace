@@ -1,3 +1,5 @@
+import gevent.monkey
+gevent.monkey.patch_all()
 import wave
 import threading
 from datetime import datetime, timedelta, timezone
