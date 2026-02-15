@@ -30,7 +30,7 @@ WebSocketsClient audioSocket;
 // CONSTANTS
 // ------------------
 const char* DEVICE_ID   = "WT12345678";
-const char* SERVER_BASE = "https://wingtrace-production.up.railway.app";
+const char* SERVER_BASE = "https://wingtrace.onrender.com";
 // weather timer variables
 unsigned long lastWeather = 0;
 const unsigned long WEATHER_INTERVAL = 60000; // 1 minute
