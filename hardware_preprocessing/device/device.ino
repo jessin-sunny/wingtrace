@@ -8,6 +8,7 @@
 #include <driver/i2s.h>
 #include <ArduinoJson.h>
 
+#define STATUS_LED_PIN 13
 #define DHTPIN  27
 #define DHTTYPE DHT11
 #define RESET_BUTTON_PIN  32
@@ -36,6 +37,9 @@ const unsigned long WEATHER_INTERVAL = 60000; // 1 minute
 //push button variables
 unsigned long buttonPressStart = 0;
 bool buttonPressed = false;
+// status led variables
+bool ledBlinkState = false;
+unsigned long lastLedToggle = 0;
 
 // ------------------
 // OBJECTS
@@ -65,6 +69,7 @@ unsigned long lastCommandPoll = 0;
 
 const unsigned long ALIVE_INTERVAL   = 300000; // 5 min
 const unsigned long COMMAND_INTERVAL = 5000;  // 5 second
+const unsigned long LED_BLINK_INTERVAL = 300; // ms
 
 int16_t audioBuffer[BUFFER_LEN];
 QueueHandle_t audioQueue;
@@ -402,13 +407,34 @@ void networkReset() {
   startSetupMode();
 }
 
+void ledOn() {
+  digitalWrite(STATUS_LED_PIN, HIGH);
+}
+
+void ledOff() {
+  digitalWrite(STATUS_LED_PIN, LOW);
+}
+
+void ledBlinkTask() {
+  unsigned long now = millis();
+  if (now - lastLedToggle >= LED_BLINK_INTERVAL) {
+    lastLedToggle = now;
+    ledBlinkState = !ledBlinkState;
+    digitalWrite(STATUS_LED_PIN, ledBlinkState ? HIGH : LOW);
+  }
+}
 
 // ------------------
 // SETUP
 // ------------------
 void setup() {
   Serial.begin(921600);
+
+  pinMode(STATUS_LED_PIN, OUTPUT);
+  ledOff();  // default OFF
+
   pinMode(RESET_BUTTON_PIN, INPUT_PULLUP);
+
   dht.begin();
   delay(2000);
 
@@ -493,5 +519,16 @@ void loop() {
       audioSocket.sendBIN((uint8_t*)tempBuf, sizeof(tempBuf));
     }
   }
+    // ===== STATUS LED LOGIC (UPDATED) =====
+  if (isRecording) {
+    ledBlinkTask();   // Blink during audio recording
+  } else {
+    if (WiFi.status() == WL_CONNECTED) {
+      ledOn();        // WiFi connected → LED ON
+    } else {
+      ledOff();       // No WiFi / Setup mode → LED OFF
+    }
+  }
+
 }
 
