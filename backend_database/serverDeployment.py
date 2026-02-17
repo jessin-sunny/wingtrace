@@ -12,6 +12,7 @@ from google.cloud.firestore_v1 import FieldFilter
 from flask_sock import Sock
 from threading import Lock
 from supabase import create_client
+from google.api_core.exceptions import DeadlineExceeded
 
 
 app = Flask(__name__)
@@ -473,8 +474,18 @@ def factoryReset():
 @app.route("/command", methods=["GET"])
 def get_command():
     device_id = request.args.get("deviceId", "").strip()
+    if not device_id:
+        return "NO_COMMAND", 200
 
-    device_doc = fs.collection("devices").document(device_id).get()
+    try:
+        device_doc = fs.collection("devices").document(device_id).get(timeout=5)
+    except DeadlineExceeded:
+        print("[FIRESTORE TIMEOUT]")
+        return "NO_COMMAND", 200
+    except Exception as e:
+        print(f"[FIRESTORE ERROR] {e}")
+        return "NO_COMMAND", 200
+
     if not device_doc.exists:
         return "NO_COMMAND", 200
 
