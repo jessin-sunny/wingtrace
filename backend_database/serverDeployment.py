@@ -1,5 +1,3 @@
-import gevent.monkey
-gevent.monkey.patch_all()
 import wave
 import threading
 from datetime import datetime, timedelta, timezone
@@ -15,12 +13,6 @@ from flask_sock import Sock
 from threading import Lock
 from supabase import create_client
 
-# 2. FIX THE ASYNCIO CONFLICT
-import asyncio
-try:
-    asyncio.get_event_loop()
-except RuntimeError:
-    asyncio.set_event_loop(asyncio.new_event_loop())
 
 app = Flask(__name__)
 sock = Sock(app)
