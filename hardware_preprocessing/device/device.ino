@@ -243,7 +243,7 @@ void startNormalMode() {
   initI2S();
   // ---- AUDIO SOCKET SETUP ----
   audioSocket.beginSSL(
-    "wingtrace-production.up.railway.app", // host
+    "wingtrace.onrender.com", // host
     443,
     "/startAudioStream"                              // websocket path
   );
@@ -326,6 +326,8 @@ void pollServerCommand() {
   HTTPClient http;
   String url = String(SERVER_BASE) + "/command?deviceId=" + DEVICE_ID;
   http.begin(secureClient, url);
+  http.begin(secureClient, url);
+  http.setTimeout(4000);
   int code = http.GET();
 
   if (code == 200) {
