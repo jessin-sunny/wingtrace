@@ -38,11 +38,9 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
 devices_lock = Lock()   # Thread Safety
-
 # ===============================
-# CONFIG (Railway safe)
+# CONFIG
 # ===============================
-
 # Railway provides PORT via environment variable
 PORT = int(os.environ.get("PORT", 5000))
 
@@ -75,6 +73,13 @@ CHUNK_SECONDS = 5
 SAMPLE_RATE = 16000
 CHANNELS = 1
 SAMPLE_WIDTH = 2  # int16
+
+# ===============================
+# RENDER SAFETY CHECK
+# ===============================
+@app.route('/')
+def health_check():
+    return "OK", 200
 
 # ===============================
 # DEVICE HEARTBEAT
