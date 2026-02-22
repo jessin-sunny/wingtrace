@@ -233,7 +233,7 @@ class DeviceDetailsScreen extends StatefulWidget {
 class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
   late bool _isOnline;
   bool _isLoading = false;
-  final String serverUrl = "https://wingtrace-production.up.railway.app";
+  final String serverUrl = "https://wingtrace.onrender.com";
 
   @override
   void initState() {

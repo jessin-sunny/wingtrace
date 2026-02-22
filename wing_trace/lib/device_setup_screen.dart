@@ -20,7 +20,7 @@ class _DeviceSetupScreenState extends State<DeviceSetupScreen> {
   bool _isLoading = false;
   final NetworkInfo _networkInfo = NetworkInfo();
   
-  final String serverUrl = "https://wingtrace-production.up.railway.app";
+  final String serverUrl = "https://wingtrace.onrender.com";
   final TextEditingController _ssidController = TextEditingController();
   final TextEditingController _passController = TextEditingController();
 
