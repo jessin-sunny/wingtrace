@@ -270,7 +270,7 @@ class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
     setState(() => _isLoading = true);
     try {
       final response = await http.post(
-        Uri.parse("$serverUrl/reset"),
+        Uri.parse("$serverUrl/factoryReset"),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({
           "deviceId": widget.deviceId,
@@ -300,6 +300,44 @@ class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
 
   void _showSnackBar(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+  void _showResetConfirmation(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, color: Colors.red),
+              SizedBox(width: 10),
+              Text("Factory Reset"),
+            ],
+          ),
+          content: const Text(
+            "Are you sure you want to reset this hardware? This will wipe all data, remove your ownership, and require a full setup again.",
+            style: TextStyle(fontSize: 14),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context), // Close dialog
+              child: const Text("CANCEL", style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              onPressed: () {
+                Navigator.pop(context); // Close dialog
+                _handleReset(); // Execute actual reset
+              },
+              child: const Text("RESET NOW", style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   @override
@@ -333,7 +371,7 @@ class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
                   Icons.restart_alt,
                   "Reset Hardware",
                   "Wipe ownership and factory reset",
-                  _handleReset,
+                  () => _showResetConfirmation(context),
                   color: Colors.red,
                 ),
               ],
