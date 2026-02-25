@@ -67,7 +67,7 @@ String setupToken = "";
 unsigned long lastAlive = 0;
 unsigned long lastCommandPoll = 0;
 
-const unsigned long ALIVE_INTERVAL   = 300000; // 5 min
+const unsigned long ALIVE_INTERVAL = 30000; // 30 seconds
 const unsigned long COMMAND_INTERVAL = 5000;  // 5 second
 const unsigned long LED_BLINK_INTERVAL = 300; // ms
 
@@ -308,12 +308,29 @@ void handleCommand(String command) {
 
  if (command == "START_AUDIO") {
     Serial.println(">>> START AUDIO");
+    // Clear I2S before starting
+    i2s_zero_dma_buffer(I2S_NUM_0);
+
+    // Clear queue
+    int16_t dummy[BUFFER_LEN];
+    while (xQueueReceive(audioQueue, dummy, 0) == pdTRUE) {}
+
     isRecording = true;
   }
 
   if (command == "STOP_AUDIO") {
     Serial.println(">>> STOP AUDIO");
     isRecording = false;
+
+    //Clear I2S DMA buffer
+    i2s_zero_dma_buffer(I2S_NUM_0);
+
+    // Flush FreeRTOS audio queue
+    int16_t dummy[BUFFER_LEN];
+    while (xQueueReceive(audioQueue, dummy, 0) == pdTRUE) {
+        // discard leftover samples
+    }
+
   }
 }
 
