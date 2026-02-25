@@ -357,25 +357,13 @@ void sendWeather() {
     return;
   }
 
-
-  float humidity = NAN;
-  float temperature = NAN;
-
-  // Try up to 3 times
-  for (int i = 0; i < 3; i++) {
-    humidity = dht.readHumidity();
-    temperature = dht.readTemperature();
-    if (!isnan(humidity) && !isnan(temperature)) {
-      break;
-    }
-    delay(2000);  // DHT needs time
-  }
+  float humidity = dht.readHumidity();
+  float temperature = dht.readTemperature();
 
   if (isnan(humidity) || isnan(temperature)) {
-    Serial.println("Failed to read from DHT sensor after retries");
-    return;
+    Serial.println("DHT read failed — skipping this cycle");
+    return;   // <-- DO NOT BLOCK
   }
-
 
   HTTPClient http;
   http.begin(secureClient, String(SERVER_BASE) + "/weather");
