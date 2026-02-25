@@ -107,7 +107,7 @@ class _UserDashboardState extends State<UserDashboard> {
 
       if (confirm == true) {
         final resp = await http.post(
-          Uri.parse("https://wingtrace-production.up.railway.app/disconnect"),
+          Uri.parse("https://wingtrace.onrender.com/disconnect"),
           headers: {"Content-Type": "application/json"},
           body: jsonEncode({
             "deviceId": _realDeviceId ?? "WT12345678",

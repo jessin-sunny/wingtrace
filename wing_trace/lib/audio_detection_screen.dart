@@ -18,7 +18,7 @@ class _AudioDetectionScreenState extends State<AudioDetectionScreen> with Single
   bool _isLoading = false;
   String? _deviceId;
   late AnimationController _pulseController;
-  final String _serverUrl = "https://wingtrace-production.up.railway.app";
+  final String _serverUrl = "https://wingtrace.onrender.com";
 
   @override
   void initState() {
