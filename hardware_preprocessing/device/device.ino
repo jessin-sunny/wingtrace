@@ -308,13 +308,6 @@ void handleCommand(String command) {
 
  if (command == "START_AUDIO") {
     Serial.println(">>> START AUDIO");
-    // Clear I2S before starting
-    i2s_zero_dma_buffer(I2S_NUM_0);
-
-    // Clear queue
-    int16_t dummy[BUFFER_LEN];
-    while (xQueueReceive(audioQueue, dummy, 0) == pdTRUE) {}
-
     isRecording = true;
   }
 
