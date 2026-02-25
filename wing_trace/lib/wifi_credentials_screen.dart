@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'dart:convert';
+import 'package:firebase_database/firebase_database.dart'; // Ensure this is in pubspec.yaml
 import 'dart:async';
 
 class WifiCredentialsScreen extends StatefulWidget {
@@ -14,10 +14,12 @@ class _WifiCredentialsScreenState extends State<WifiCredentialsScreen> {
   final TextEditingController _ssidController = TextEditingController();
   final TextEditingController _passController = TextEditingController();
   bool _isSending = false;
-  Timer? _pollingTimer;
-  
+  StreamSubscription<DatabaseEvent>? _statusSubscription;
+  Timer? _timeoutTimer;
+
+  // The local IP of the hardware in AP mode
   final String _hardwareApUrl = "http://192.168.4.1/setup";
-  final String _serverStatusUrl = "https://wingtrace.onrender.com/status"; 
+  final String _deviceId = "WT12345678"; // Dynamic ID recommended
 
   Future<void> _updateWifi() async {
     if (_ssidController.text.isEmpty || _passController.text.isEmpty) {
@@ -25,68 +27,72 @@ class _WifiCredentialsScreenState extends State<WifiCredentialsScreen> {
       return;
     }
 
-    // Step 1: Capture start time in milliseconds
-    final int resetStartTime = DateTime.now().millisecondsSinceEpoch;
+    // Capture start time in seconds (matching lastSeen format)
+    final int resetStartTimeSeconds = DateTime.now().millisecondsSinceEpoch ~/ 1000;
     setState(() => _isSending = true);
 
     try {
+      // Step 1: Send credentials to ESP32
       final response = await http.post(
         Uri.parse(_hardwareApUrl),
-        body: {'ssid': _ssidController.text.trim(), 'pass': _passController.text.trim()},
+        body: {
+          'ssid': _ssidController.text.trim(),
+          'pass': _passController.text.trim(),
+        },
       ).timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
-        // Step 2: Begin Polling the backend
-        _startPolling(resetStartTime);
+        // Step 2: Listen directly to Realtime DB instead of polling a server function
+        _listenToDeviceStatus(resetStartTimeSeconds);
       }
     } catch (e) {
       setState(() => _isSending = false);
-      _showSnackBar("Error: Connection lost. Ensure you are still on WingTrace Wi-Fi.");
+      _showSnackBar("Error: Connection lost. Ensure you are on WingTrace Wi-Fi.");
     }
   }
 
-  void _startPolling(int resetStartTime) {
-    int elapsed = 0;
+  void _listenToDeviceStatus(int resetStartTimeSeconds) {
     _showWaitingDialog();
 
-    _pollingTimer = Timer.periodic(const Duration(seconds: 3), (timer) async {
-      elapsed += 3;
-
-      // Step 3: Timeout after 2 minutes
-      if (elapsed >= 120) {
-        timer.cancel();
-        Navigator.pop(context); // Close dialog
-        _showErrorDialog("Timeout: Device failed to reconnect. Please check Wi-Fi details.");
+    // Step 3: Set a 2-minute timeout timer
+    _timeoutTimer = Timer(const Duration(minutes: 2), () {
+      _stopListening();
+      if (mounted) {
+        Navigator.pop(context); // Close waiting dialog
+        _showErrorDialog("Timeout: Device failed to reconnect. Check Wi-Fi details.");
         setState(() => _isSending = false);
-        return;
       }
+    });
 
-      try {
-        final res = await http.post(
-          Uri.parse(_serverStatusUrl),
-          headers: {"Content-Type": "application/json"},
-          body: jsonEncode({"deviceId": "WT12345678"}), // Use dynamic ID
-        );
+    // Step 4: Listen for changes in the 'status' node
+    _statusSubscription = FirebaseDatabase.instance
+        .ref("devices/$_deviceId/status")
+        .onValue
+        .listen((event) {
+      final data = event.snapshot.value as Map<dynamic, dynamic>?;
 
-        if (res.statusCode == 200) {
-          final data = jsonDecode(res.body);
-          bool isOnline = data['isOnline'] ?? false;
-          int lastSeen = data['lastSeen'] ?? 0;
+      if (data != null) {
+        bool isOnline = data['isOnline'] ?? false;
+        int lastSeen = data['lastSeen'] ?? 0;
 
-          // Step 4: Verify lastSeen is AFTER resetStartTime
-          if (isOnline && (lastSeen * 1000) > resetStartTime) {
-            timer.cancel();
-            Navigator.pop(context); // Close dialog
+        // Step 5: Verify reconnection AFTER the reset started
+        if (isOnline && lastSeen > resetStartTimeSeconds) {
+          _stopListening();
+          if (mounted) {
+            Navigator.pop(context); // Close waiting dialog
             _showSuccessDialog();
           }
         }
-      } catch (e) {
-        debugPrint("Searching for device..."); 
       }
     });
   }
 
-  // --- Helper UI Components ---
+  void _stopListening() {
+    _statusSubscription?.cancel();
+    _timeoutTimer?.cancel();
+  }
+
+  // --- UI Components ---
 
   void _showWaitingDialog() {
     showDialog(
@@ -98,7 +104,9 @@ class _WifiCredentialsScreenState extends State<WifiCredentialsScreen> {
           children: [
             CircularProgressIndicator(),
             SizedBox(height: 20),
-            Text("WingTrace is connecting to your Home Wi-Fi...", textAlign: TextAlign.center),
+            Text("WingTrace is reconnecting...", style: TextStyle(fontWeight: FontWeight.bold)),
+            SizedBox(height: 10),
+            Text("Checking Realtime Database for device status.", textAlign: TextAlign.center),
           ],
         ),
       ),
@@ -110,7 +118,8 @@ class _WifiCredentialsScreenState extends State<WifiCredentialsScreen> {
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
-        title: const Text("Successfully Connected!"),
+        title: const Icon(Icons.check_circle, color: Colors.green, size: 50),
+        content: const Text("Successfully Reconnected!\nYour device is now online.", textAlign: TextAlign.center),
         actions: [
           TextButton(
             onPressed: () => Navigator.popUntil(context, (route) => route.isFirst),
@@ -122,7 +131,7 @@ class _WifiCredentialsScreenState extends State<WifiCredentialsScreen> {
   }
 
   void _showErrorDialog(String msg) => showDialog(
-    context: context, 
+    context: context,
     builder: (ctx) => AlertDialog(title: const Text("Error"), content: Text(msg), actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("OK"))])
   );
 
@@ -130,7 +139,7 @@ class _WifiCredentialsScreenState extends State<WifiCredentialsScreen> {
 
   @override
   void dispose() {
-    _pollingTimer?.cancel();
+    _stopListening();
     _ssidController.dispose();
     _passController.dispose();
     super.dispose();
@@ -140,20 +149,29 @@ class _WifiCredentialsScreenState extends State<WifiCredentialsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFFDFBE7),
-      appBar: AppBar(title: const Text("Wi-Fi Setup"), backgroundColor: Colors.blue, foregroundColor: Colors.white),
+      appBar: AppBar(title: const Text("Configure Wi-Fi"), backgroundColor: Colors.blue, foregroundColor: Colors.white),
       body: Padding(
         padding: const EdgeInsets.all(25.0),
         child: Column(
           children: [
-            TextField(controller: _ssidController, decoration: const InputDecoration(labelText: "Home Wi-Fi SSID")),
-            const SizedBox(height: 20),
-            TextField(controller: _passController, obscureText: true, decoration: const InputDecoration(labelText: "Password")),
-            const SizedBox(height: 40),
-            _isSending ? const CircularProgressIndicator() : ElevatedButton(
-              onPressed: _updateWifi,
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, minimumSize: const Size(double.infinity, 55)),
-              child: const Text("CONNECT DEVICE", style: TextStyle(color: Colors.white)),
+            TextField(
+              controller: _ssidController, 
+              decoration: const InputDecoration(labelText: "Home Wi-Fi SSID", border: OutlineInputBorder(), prefixIcon: Icon(Icons.wifi))
             ),
+            const SizedBox(height: 20),
+            TextField(
+              controller: _passController, 
+              obscureText: true, 
+              decoration: const InputDecoration(labelText: "Password", border: OutlineInputBorder(), prefixIcon: Icon(Icons.lock))
+            ),
+            const SizedBox(height: 40),
+            _isSending 
+              ? const CircularProgressIndicator() 
+              : ElevatedButton(
+                  onPressed: _updateWifi,
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, minimumSize: const Size(double.infinity, 55)),
+                  child: const Text("CONNECT DEVICE", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                ),
           ],
         ),
       ),
