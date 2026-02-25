@@ -154,7 +154,7 @@ void handleSetup() {
   setupToken = doc["setupToken"].as<String>();
 
 
-  if (ssid == "" || password == "" || userid == "" || setupToken == "") {
+  if (ssid == "" || password == "" || userid == "") {
     server.send(400, "text/plain", "Invalid data");
     return;
   }
@@ -220,25 +220,31 @@ void startNormalMode() {
   Serial.println(WiFi.localIP());
   secureClient.setInsecure();  // accept all certificates
   if (setupToken.length() > 0) {
-    HTTPClient http;
-    http.begin(secureClient, String(SERVER_BASE) + "/onBoard");
-    http.addHeader("Content-Type", "application/json");
+      HTTPClient http;
+      http.begin(secureClient, String(SERVER_BASE) + "/onBoard");
+      http.addHeader("Content-Type", "application/json");
 
-    String payload =
-      "{\"deviceId\":\"" + String(DEVICE_ID) +
-      "\",\"userId\":\"" + userid +
-      "\",\"setupToken\":\"" + setupToken + "\"}";
+      String payload =
+        "{\"deviceId\":\"" + String(DEVICE_ID) +
+        "\",\"userId\":\"" + userid +
+        "\",\"setupToken\":\"" + setupToken + "\"}";
 
-    int code = http.POST(payload);
-    Serial.println("Onboard message sent, code: " + String(code));
-    http.end();
+      int code = http.POST(payload);
 
-    // CRITICAL: clear token immediately
-    prefs.begin("wifi", false);
-    prefs.remove("setupToken");
-    prefs.end();
+      Serial.println("Onboard HTTP code: " + String(code));
+      http.end();
+
+      if (code == 200) {
+          Serial.println("Onboard SUCCESS → removing setupToken");
+
+          prefs.begin("wifi", false);
+          prefs.remove("setupToken");
+          prefs.end();
+      } else {
+          Serial.println("Onboard FAILED → keeping setupToken for retry");
+      }
   } else {
-    Serial.println("Already onboarded — skipping /onBoard");
+      Serial.println("Already onboarded — skipping /onBoard");
   }
   initI2S();
   // ---- AUDIO SOCKET SETUP ----
