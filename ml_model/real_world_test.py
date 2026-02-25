@@ -87,7 +87,7 @@ def predict_file(file_path):
 # ======================
 # TEST
 # ======================
-file_path = r"C:\My\RIT\S8\Project\Audio Recordings\Flying Pests\WT12345678_1772034557.wav"
+file_path = r"C:\My\RIT\S8\Project\Dataset\Audio\Pest 2.0\stored_product\A7-piezorw1.wav"
 
 predicted_class, confidence = predict_file(file_path)
 
