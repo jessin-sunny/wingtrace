@@ -609,8 +609,6 @@ def start_audio():
             "error": "Device must be ONLINE to start audio"
         }), 409
     
-    audio_buffers.pop(device_id, None)
-    audio_locks.pop(device_id, None)
 
     # Queue START_AUDIO
     device_commands[device_id] = {
