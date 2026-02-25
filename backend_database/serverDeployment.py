@@ -594,13 +594,23 @@ def start_audio():
     ok, error = validate_device_owner(device_id, user_id)
     if not ok:
         return jsonify(error[0]), error[1]
+    
+    # Check CONNECTED (Firestore)
+    device_doc = fs.collection("devices").document(device_id).get()
+    if not device_doc.exists or device_doc.to_dict().get("status") != "CONNECTED":
+        return jsonify({
+            "error": "Device must be CONNECTED to start audio"
+        }), 409
 
-    # check device ONLINE
+    # Check ONLINE (RTDB)
     status = rtdb.reference(f"devices/{device_id}/status").get()
     if not status or not status.get("isOnline"):
         return jsonify({
             "error": "Device must be ONLINE to start audio"
         }), 409
+    
+    audio_buffers.pop(device_id, None)
+    audio_locks.pop(device_id, None)
 
     # Queue START_AUDIO
     device_commands[device_id] = {
@@ -637,8 +647,22 @@ def stop_audio():
     ok, error = validate_device_owner(device_id, user_id)
     if not ok:
         return jsonify(error[0]), error[1]
+    
+    # Check CONNECTED (Firestore)
+    device_doc = fs.collection("devices").document(device_id).get()
+    if not device_doc.exists or device_doc.to_dict().get("status") != "CONNECTED":
+        return jsonify({
+            "error": "Device must be CONNECTED to stop audio"
+        }), 409
 
-    # Queue STOP_AUDIO to device
+    # Check ONLINE (RTDB)
+    status = rtdb.reference(f"devices/{device_id}/status").get()
+    if not status or not status.get("isOnline"):
+        return jsonify({
+            "error": "Device must be ONLINE to stop audio"
+        }), 409
+
+    # Queue STOP_AUDIO
     device_commands[device_id] = {
         "command": "STOP_AUDIO",
         "userId": user_id,
@@ -650,7 +674,7 @@ def stop_audio():
         "isRecording": False
     })
 
-    # FINAL FLUSH (even if < 5s)
+    # FINAL FLUSH
     if (
         device_id in audio_buffers
         and device_id in audio_locks
@@ -660,7 +684,6 @@ def stop_audio():
             raw_audio = bytes(audio_buffers[device_id])
             audio_buffers[device_id].clear()
 
-        # write + upload + store metadata
         flush_audio_chunk(device_id, raw_audio)
 
     print(f"[STOP_AUDIO QUEUED] {device_id}")
@@ -783,7 +806,7 @@ def audio_stream(ws):
 
 def maintenance_worker():
     token_check_counter = 0  # counts minutes
-    OFFLINE_THRESHOLD = 360  # seconds (6 minutes)
+    OFFLINE_THRESHOLD = 120  # seconds (2 minutes)
 
     while True:
         now = int(time.time())
