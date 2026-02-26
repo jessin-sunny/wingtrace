@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'report_bug_screen.dart';
 import 'device_setup_screen.dart';
+import 'network_reset_guide.dart';
 
 class SettingsScreen extends StatefulWidget {
   final bool isConnected;
@@ -373,6 +374,18 @@ class _DeviceDetailsScreenState extends State<DeviceDetailsScreen> {
                   "Wipe ownership and factory reset",
                   () => _showResetConfirmation(context),
                   color: Colors.red,
+                ),
+                // Add this inside the Column in your build method
+                const SizedBox(height: 15),
+                _actionTile(
+                  Icons.wifi_find_rounded,
+                  "Reset Network",
+                  "Reconfigure Wi-Fi settings",
+                  () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const NetworkResetGuideScreen()),
+                  ),
+                  color: Colors.blue,
                 ),
               ],
             ),
