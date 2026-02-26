@@ -240,8 +240,6 @@ void startNormalMode() {
           prefs.begin("wifi", false);
           prefs.remove("setupToken");
           prefs.end();
-      } else {
-          Serial.println("Onboard FAILED → keeping setupToken for retry");
       }
   } else {
       Serial.println("Already onboarded — skipping /onBoard");
