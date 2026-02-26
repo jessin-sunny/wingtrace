@@ -41,5 +41,5 @@ def predict(file_path):
     return class_names[predicted.item()]
 
 # Example usage
-file_path = r"c:\My\RIT\S8\Project\Audio Recordings\Mosquito\mosquito.wav"
+file_path = r"C:\My\RIT\S8\Project\Dataset\Audio\Pest 2.0\wood_pests\D9b-cerambycid2-aed.wav"
 print("Prediction:", predict(file_path))
