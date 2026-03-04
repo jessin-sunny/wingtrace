@@ -1,0 +1,11 @@
+# Dataset
+ml_model/Mosquito Image Model/Dataset/
+
+# Python cache
+__pycache__/
+*.pyc
+
+
+# OS files
+.DS_Store
+Thumbs.db
