@@ -71,6 +71,7 @@ const unsigned long ALIVE_INTERVAL = 30000; // 30 seconds
 const unsigned long COMMAND_INTERVAL = 5000;  // 5 second
 const unsigned long LED_BLINK_INTERVAL = 300; // ms
 
+int32_t rawBuffer[BUFFER_LEN];   // NEW – 32-bit raw I2S capture
 int16_t audioBuffer[BUFFER_LEN];
 QueueHandle_t audioQueue;
 bool isRecording = false;
@@ -84,7 +85,7 @@ void initI2S() {
   i2s_config_t cfg = {
     .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
     .sample_rate = SAMPLE_RATE,
-    .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
+    .bits_per_sample = I2S_BITS_PER_SAMPLE_32BIT,
     .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
     .communication_format = I2S_COMM_FORMAT_I2S,
     .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
@@ -506,14 +507,30 @@ void loop() {
   if (isRecording) {
     i2s_read(
       I2S_NUM_0,
-      audioBuffer,
-      sizeof(audioBuffer),
+      rawBuffer,
+      sizeof(rawBuffer),
       &bytesRead,
-      0   // NON-BLOCKING
+      0
     );
 
     if (bytesRead > 0) {
-      xQueueSend(audioQueue, audioBuffer, 0);
+
+        const float GAIN = 8.0;   
+
+        for (int i = 0; i < BUFFER_LEN; i++) {
+
+            int32_t sample = rawBuffer[i] >> 8;   // 24-bit signed
+            // Convert 24-bit to 16-bit properly
+            sample = sample >> 8;   // scale down from 24-bit to 16-bit
+            // Apply gain if needed (optional)
+            sample = sample * GAIN;
+            // Clip safely
+            if (sample > 32767) sample = 32767;
+            if (sample < -32768) sample = -32768;
+            audioBuffer[i] = (int16_t)sample;
+        }
+
+        xQueueSend(audioQueue, audioBuffer, 0);
     }
   }
   // send audio from queue to ws
