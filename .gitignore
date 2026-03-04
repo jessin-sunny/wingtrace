@@ -1,5 +1,6 @@
 # Dataset
 ml_model/Mosquito Image Model/Dataset/
+ml_model/Pest Image Model/Dataset
 
 # Python cache
 __pycache__/
