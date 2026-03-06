@@ -660,14 +660,14 @@ def insert_category():
 
 
     mosquito_fields = [
-        "name","category","default_risk","diseases","bite_time",
+        "name","category","default_risk","diseases","bite_time","common_name","scientific_name",
         "breeding_sites","subspecies","risk_radius",
         "public_actions","control_methods"
     ]
 
     pest_fields = [
         "name","category","default_risk","crops_affected","active_period",
-        "habitat","damage_symptoms","subspecies",
+        "habitat","damage_symptoms","subspecies","common_name","scientific_name",
         "public_actions","control_methods"
     ]
 
@@ -813,14 +813,8 @@ def update_category():
                     name
                 )
 
-                images.append(image_url)
-
             except Exception as e:
                 return jsonify({"error": f"Image upload failed: {str(e)}"}), 500
-
-
-    if images:
-        data["images"] = images
 
 
     update_data = {k: v for k, v in data.items() if k != "name"}
