@@ -575,6 +575,82 @@ def add_device():
         "deviceId": device_id
     }), 201
 
+# ADMIN: Manufacture a new species information to database
+@app.route("/insertCategory", methods=["POST"])
+def insert_category():
+
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "Invalid JSON"}), 400
+
+    category = data.get("category")
+    if not category:
+        return jsonify({"error": "category field required"}), 400
+
+
+    mosquito_fields = [
+        "name",
+        "category",
+        "image",
+        "default_risk",
+        "diseases",
+        "bite_time",
+        "breeding_sites",
+        "subspecies",
+        "risk_radius",
+        "public_actions",
+        "control_methods"
+    ]
+
+
+    pest_fields = [
+        "name",
+        "category",
+        "image",
+        "default_risk",
+        "crops_affected",
+        "active_period",
+        "habitat",
+        "damage_symptoms",
+        "subspecies",
+        "public_actions",
+        "control_methods"
+    ]
+
+
+    if category == "mosquito":
+        required_fields = mosquito_fields
+    elif category == "pest":
+        required_fields = pest_fields
+    else:
+        return jsonify({"error": "category must be 'mosquito' or 'pest'"}), 400
+
+
+    missing = [f for f in required_fields if f not in data]
+
+    if missing:
+        return jsonify({
+            "error": "Missing required fields",
+            "missing": missing
+        }), 400
+
+
+    name = data["name"]
+    doc_id = name.strip().lower().replace(" ", "_")
+
+    try:
+        fs.collection("categories").document(doc_id).set(data)
+
+        print(f"[CATEGORY INSERTED] {doc_id}")
+
+        return jsonify({
+            "status": "SUCCESS",
+            "documentId": doc_id
+        }), 201
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 # ===============================
 # AUDIO CONTROLS
 # ===============================
