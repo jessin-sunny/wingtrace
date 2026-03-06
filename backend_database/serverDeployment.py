@@ -716,8 +716,6 @@ def insert_category():
     # IMAGE HANDLING (0–N images)
     # ============================
 
-    images = []
-
     files = request.files.getlist("images")
 
     for file in files:
@@ -731,14 +729,8 @@ def insert_category():
                     name
                 )
 
-                images.append(image_url)
-
             except Exception as e:
                 return jsonify({"error": f"Image upload failed: {str(e)}"}), 500
-
-
-    if images:
-        data["images"] = images
 
 
     data["createdAt"] = firestore.SERVER_TIMESTAMP
