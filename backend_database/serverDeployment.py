@@ -209,18 +209,64 @@ def get_weather():
 # ===============================
 # SPECIES DATA
 # ===============================
+
+def get_species_images(category, species):
+
+    bucket = supabase.storage.from_("categories")
+
+    species_id = species.strip().lower().replace(" ", "_")
+
+    folder = f"{category}/{species_id}"
+
+    images = []
+
+    try:
+
+        res = bucket.list(folder)
+
+        if res:
+            for file in res:
+
+                name = file.get("name")
+
+                if name:
+                    path = f"{folder}/{name}"
+
+                    url = bucket.get_public_url(path)
+
+                    images.append(url)
+
+    except Exception as e:
+        print(f"[IMAGE LIST ERROR] {e}")
+
+    return images
+
+
 @app.route("/category/<doc_id>", methods=["GET"])
 def get_category(doc_id):
 
     doc_id = doc_id.strip().lower().replace(" ", "_")
 
     try:
+
         doc = fs.collection("categories").document(doc_id).get()
 
         if not doc.exists:
             return jsonify({"error": "Category not found"}), 404
 
-        return jsonify(doc.to_dict()), 200
+        data = doc.to_dict()
+
+        category = data.get("category")
+
+        if not category:
+            return jsonify({"error": "Category field missing"}), 500
+
+        # fetch images from Supabase
+        images = get_species_images(category, doc_id)
+
+        data["images"] = images
+
+        return jsonify(data), 200
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -634,6 +680,7 @@ def insert_category():
         return jsonify({"error": "category must be 'mosquito' or 'pest'"}), 400
 
 
+    # Convert JSON string fields to Python objects
     parse_json_fields(data, [
         "diseases",
         "bite_time",
@@ -659,19 +706,23 @@ def insert_category():
     name = data["name"]
     doc_id = name.strip().lower().replace(" ", "_")
 
-
     doc_ref = fs.collection("categories").document(doc_id)
 
     if doc_ref.get().exists:
         return jsonify({"error": "Species already exists"}), 409
 
 
-    # IMAGE HANDLING
-    if "image" in request.files:
+    # ============================
+    # IMAGE HANDLING (0–N images)
+    # ============================
 
-        file = request.files["image"]
+    images = []
 
-        if file.filename != "":
+    files = request.files.getlist("images")
+
+    for file in files:
+
+        if file and file.filename != "":
             try:
 
                 image_url = upload_category_image_to_supabase(
@@ -680,10 +731,14 @@ def insert_category():
                     name
                 )
 
-                data["image"] = image_url
+                images.append(image_url)
 
             except Exception as e:
                 return jsonify({"error": f"Image upload failed: {str(e)}"}), 500
+
+
+    if images:
+        data["images"] = images
 
 
     data["createdAt"] = firestore.SERVER_TIMESTAMP
@@ -718,7 +773,6 @@ def update_category():
     doc_id = name.strip().lower().replace(" ", "_")
 
     doc_ref = fs.collection("categories").document(doc_id)
-
     doc = doc_ref.get()
 
     if not doc.exists:
@@ -733,6 +787,7 @@ def update_category():
         return jsonify({"error": "category missing"}), 400
 
 
+    # Convert JSON string fields to Python objects
     parse_json_fields(data, [
         "diseases",
         "bite_time",
@@ -747,12 +802,17 @@ def update_category():
     ])
 
 
-    # IMAGE HANDLING
-    if "image" in request.files:
+    # ============================
+    # IMAGE HANDLING (0–N images)
+    # ============================
 
-        file = request.files["image"]
+    images = existing_data.get("images", [])
 
-        if file.filename != "":
+    files = request.files.getlist("images")
+
+    for file in files:
+
+        if file and file.filename != "":
             try:
 
                 image_url = upload_category_image_to_supabase(
@@ -761,10 +821,14 @@ def update_category():
                     name
                 )
 
-                data["image"] = image_url
+                images.append(image_url)
 
             except Exception as e:
                 return jsonify({"error": f"Image upload failed: {str(e)}"}), 500
+
+
+    if images:
+        data["images"] = images
 
 
     update_data = {k: v for k, v in data.items() if k != "name"}
