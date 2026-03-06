@@ -206,6 +206,25 @@ def get_weather():
 
     return jsonify(weather_data), 200
 
+# ===============================
+# SPECIES DATA
+# ===============================
+@app.route("/category/<doc_id>", methods=["GET"])
+def get_category(doc_id):
+
+    doc_id = doc_id.strip().lower().replace(" ", "_")
+
+    try:
+        doc = fs.collection("categories").document(doc_id).get()
+
+        if not doc.exists:
+            return jsonify({"error": "Category not found"}), 404
+
+        return jsonify(doc.to_dict()), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 
 # ===============================
 # CONNECTION CONTROL
@@ -527,7 +546,6 @@ def get_command():
     return command, 200
 
 
-
 # ===============================
 # ADMIN CONTROL
 # ===============================
@@ -575,13 +593,20 @@ def add_device():
         "deviceId": device_id
     }), 201
 
-# ADMIN: Manufacture a new species information to database
+def parse_json_fields(data, fields):
+
+    for f in fields:
+        if f in data:
+            try:
+                data[f] = json.loads(data[f])
+            except:
+                pass
+
+# ADMIN: Add new species information to database
 @app.route("/insertCategory", methods=["POST"])
 def insert_category():
 
-    data = request.get_json(silent=True)
-    if not data:
-        return jsonify({"error": "Invalid JSON"}), 400
+    data = request.form.to_dict()
 
     category = data.get("category")
     if not category:
@@ -589,32 +614,15 @@ def insert_category():
 
 
     mosquito_fields = [
-        "name",
-        "category",
-        "image",
-        "default_risk",
-        "diseases",
-        "bite_time",
-        "breeding_sites",
-        "subspecies",
-        "risk_radius",
-        "public_actions",
-        "control_methods"
+        "name","category","default_risk","diseases","bite_time",
+        "breeding_sites","subspecies","risk_radius",
+        "public_actions","control_methods"
     ]
 
-
     pest_fields = [
-        "name",
-        "category",
-        "image",
-        "default_risk",
-        "crops_affected",
-        "active_period",
-        "habitat",
-        "damage_symptoms",
-        "subspecies",
-        "public_actions",
-        "control_methods"
+        "name","category","default_risk","crops_affected","active_period",
+        "habitat","damage_symptoms","subspecies",
+        "public_actions","control_methods"
     ]
 
 
@@ -626,8 +634,21 @@ def insert_category():
         return jsonify({"error": "category must be 'mosquito' or 'pest'"}), 400
 
 
-    missing = [f for f in required_fields if f not in data]
+    parse_json_fields(data, [
+        "diseases",
+        "bite_time",
+        "breeding_sites",
+        "subspecies",
+        "public_actions",
+        "control_methods",
+        "crops_affected",
+        "active_period",
+        "habitat",
+        "damage_symptoms"
+    ])
 
+
+    missing = [f for f in required_fields if f not in data]
     if missing:
         return jsonify({
             "error": "Missing required fields",
@@ -638,8 +659,39 @@ def insert_category():
     name = data["name"]
     doc_id = name.strip().lower().replace(" ", "_")
 
+
+    doc_ref = fs.collection("categories").document(doc_id)
+
+    if doc_ref.get().exists:
+        return jsonify({"error": "Species already exists"}), 409
+
+
+    # IMAGE HANDLING
+    if "image" in request.files:
+
+        file = request.files["image"]
+
+        if file.filename != "":
+            try:
+
+                image_url = upload_category_image_to_supabase(
+                    file,
+                    category,
+                    name
+                )
+
+                data["image"] = image_url
+
+            except Exception as e:
+                return jsonify({"error": f"Image upload failed: {str(e)}"}), 500
+
+
+    data["createdAt"] = firestore.SERVER_TIMESTAMP
+
+
     try:
-        fs.collection("categories").document(doc_id).set(data)
+
+        doc_ref.set(data)
 
         print(f"[CATEGORY INSERTED] {doc_id}")
 
@@ -649,7 +701,114 @@ def insert_category():
         }), 201
 
     except Exception as e:
+
         return jsonify({"error": str(e)}), 500
+
+# ADMIN: Update species information to database
+@app.route("/updateCategory", methods=["POST"])
+def update_category():
+
+    data = request.form.to_dict()
+
+    name = data.get("name")
+    if not name:
+        return jsonify({"error": "name required"}), 400
+
+
+    doc_id = name.strip().lower().replace(" ", "_")
+
+    doc_ref = fs.collection("categories").document(doc_id)
+
+    doc = doc_ref.get()
+
+    if not doc.exists:
+        return jsonify({"error": "Category not found"}), 404
+
+
+    existing_data = doc.to_dict()
+
+    category = data.get("category", existing_data.get("category"))
+
+    if not category:
+        return jsonify({"error": "category missing"}), 400
+
+
+    parse_json_fields(data, [
+        "diseases",
+        "bite_time",
+        "breeding_sites",
+        "subspecies",
+        "public_actions",
+        "control_methods",
+        "crops_affected",
+        "active_period",
+        "habitat",
+        "damage_symptoms"
+    ])
+
+
+    # IMAGE HANDLING
+    if "image" in request.files:
+
+        file = request.files["image"]
+
+        if file.filename != "":
+            try:
+
+                image_url = upload_category_image_to_supabase(
+                    file,
+                    category,
+                    name
+                )
+
+                data["image"] = image_url
+
+            except Exception as e:
+                return jsonify({"error": f"Image upload failed: {str(e)}"}), 500
+
+
+    update_data = {k: v for k, v in data.items() if k != "name"}
+
+    update_data["updatedAt"] = firestore.SERVER_TIMESTAMP
+
+
+    try:
+
+        doc_ref.set(update_data, merge=True)
+
+        print(f"[CATEGORY UPDATED] {doc_id}")
+
+        return jsonify({
+            "status": "UPDATED",
+            "documentId": doc_id
+        }), 200
+
+    except Exception as e:
+
+        return jsonify({"error": str(e)}), 500
+
+def upload_category_image_to_supabase(file, category, species):
+
+    bucket = supabase.storage.from_("categories")
+
+    species_id = species.strip().lower().replace(" ", "_")
+
+    filename = f"{species_id}_{uuid.uuid4().hex}.jpg"
+
+    storage_path = f"{category}/{species_id}/{filename}"
+
+    data = file.read()
+
+    res = bucket.upload(
+        storage_path,
+        data,
+        file_options={"content-type": file.content_type}
+    )
+
+    if isinstance(res, dict) and res.get("error"):
+        raise Exception(res["error"])
+
+    return bucket.get_public_url(storage_path)
 
 # ===============================
 # AUDIO CONTROLS
@@ -772,7 +931,7 @@ def stop_audio():
 # ===============================
 # AUDIO WEBSOCKET
 # ===============================
-def upload_to_supabase(filepath, filename):
+def upload_audio_to_supabase(filepath, filename):
     with open(filepath, "rb") as f:
         data = f.read()
 
@@ -822,7 +981,7 @@ def flush_audio_chunk(device_id, raw_audio):
         wf.setframerate(SAMPLE_RATE)
         wf.writeframes(raw_audio)
 
-    public_url = upload_to_supabase(filepath, filename)
+    public_url = upload_audio_to_supabase(filepath, filename)
     store_audio_metadata(device_id, public_url)
 
     print(f"[AUDIO SAVED] {filename}")
