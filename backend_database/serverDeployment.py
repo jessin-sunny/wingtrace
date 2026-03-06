@@ -857,7 +857,10 @@ def upload_category_image_to_supabase(file, category, species):
 
     species_id = species.strip().lower().replace(" ", "_")
 
-    filename = f"{species_id}_{uuid.uuid4().hex}.jpg"
+    # Extract original extension
+    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "jpg"
+
+    filename = f"{species_id}_{uuid.uuid4().hex}.{ext}"
 
     storage_path = f"{category}/{species_id}/{filename}"
 
