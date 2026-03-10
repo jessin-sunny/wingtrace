@@ -7,7 +7,7 @@ from PIL import Image
 # IMAGE PATH (EDIT THIS)
 # =========================
 
-image_path = r"C:\My\RIT\S8\Project\Dataset\Image\Mosquito Unseen 3\AEDES\transformed_0522.jpg"
+image_path = r"C:\My\RIT\S8\Project\Dataset\Image\Mosquito Unseen\20260308_113429(1).jpeg"
 
 # =========================
 # DEVICE
