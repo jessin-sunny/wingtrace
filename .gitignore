@@ -1,7 +1,8 @@
 # Dataset
 ml_model/Mosquito Image Model/Dataset/
 ml_model/Pest Image Model/Dataset
-
+ml_model/Image Gate Keeper Model/dataset
+ml_model/Mosquito_Audio_Model/dataset
 # Python cache
 __pycache__/
 *.pyc
