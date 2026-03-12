@@ -11,6 +11,7 @@ for root, dirs, files in os.walk(root_path):
     folder_name = os.path.basename(root)
 
     images = [f for f in files if f.lower().endswith((".jpg",".jpeg",".png",".bmp",".tif",".tiff"))]
+    #images = [f for f in files if f.lower().endswith((".wav"))]
     img_count = len(images)
 
     if img_count > 0:
