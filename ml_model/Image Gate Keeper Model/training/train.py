@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from models.resnet18_image_gatekeeper import get_resnet18
+from models.resnet50_image_gatekeeper import get_resnet50
 from utils.dataset_loader import get_dataloaders
 from config import *
 
@@ -90,19 +90,14 @@ def main():
 
     train_loader, val_loader, test_loader = get_dataloaders()
 
-    model = get_resnet18().to(device)
+    model = get_resnet50().to(device)
 
     criterion = nn.CrossEntropyLoss()
 
+    # Only FC layer will train
     optimizer = optim.Adam(
-        model.parameters(),
+        model.fc.parameters(),
         lr=LR
-    )
-
-    scheduler = optim.lr_scheduler.StepLR(
-        optimizer,
-        step_size=7,
-        gamma=0.1
     )
 
     best_val_acc = 0
@@ -125,8 +120,6 @@ def main():
             criterion,
             device
         )
-
-        scheduler.step()
 
         print(f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.2f}%")
         print(f"Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.2f}%")

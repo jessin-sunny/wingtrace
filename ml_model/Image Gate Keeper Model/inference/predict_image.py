@@ -8,7 +8,7 @@ import torch
 from PIL import Image
 from torchvision import transforms
 
-from models.resnet18_image_gatekeeper import get_resnet18
+from models.resnet50_image_gatekeeper import get_resnet50
 from config import MODEL_SAVE_PATH, CLASSES
 
 
@@ -18,7 +18,7 @@ def main():
     print("Running on:", device)
 
     # Load model
-    model = get_resnet18()
+    model = get_resnet50()
 
     model.load_state_dict(
         torch.load(MODEL_SAVE_PATH, map_location=device)
@@ -27,19 +27,40 @@ def main():
     model.to(device)
     model.eval()
 
-    # Validation transform
+    # Validation transform for resnet
+    # transform = transforms.Compose([
+    #     transforms.Resize(256),
+    #     transforms.CenterCrop(224),
+    #     transforms.ToTensor(),
+    #     transforms.Normalize(
+    #         mean=[0.485,0.456,0.406],
+    #         std=[0.229,0.224,0.225]
+    #     )
+    # ])
+
+    # aggresive transform -simple for predict
     transform = transforms.Compose([
-        transforms.Resize(256),
-        transforms.CenterCrop(224),
+        transforms.Resize((224, 224)),
         transforms.ToTensor(),
         transforms.Normalize(
-            mean=[0.485,0.456,0.406],
-            std=[0.229,0.224,0.225]
+            mean=[0.485, 0.456, 0.406],
+            std=[0.229, 0.224, 0.225]
         )
     ])
 
+    # transform = transforms.Compose([
+    #     transforms.Resize((224, 224)),
+
+    #     transforms.ToTensor(),
+
+    #     transforms.Normalize(
+    #         mean=[0.485,0.456,0.406],
+    #         std=[0.229,0.224,0.225]
+    #     )
+    # ])
+
     # Direct image path
-    image_path = r"C:\My\RIT\S8\Project\Dataset\Image\Mosquito Unseen\20260308_113429(1).jpeg"
+    image_path = r"C:\My\RIT\S8\Project\Dataset\Image\Mosquito Unseen\Culex\culex1.jpg"
 
     image = Image.open(image_path).convert("RGB")
 
@@ -57,8 +78,9 @@ def main():
 
     print("\nPrediction:", class_name)
     print("Confidence:", confidence.item())
-    
-
+    for i, class_name in enumerate(CLASSES):
+        percentage = probs[0][i].item() * 100
+        print(f"{class_name}: {percentage:.2f}%")
 
 if __name__ == "__main__":
     main()
