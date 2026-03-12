@@ -6,14 +6,14 @@ base_path = r"C:\My\RIT\S8\Project\WingTrace\ml_model\Image Gate Keeper Model\da
 splits = ["train", "val", "test"]
 
 target = {
-    "train": 15577,
-    "val": 3319,
-    "test": 3364
+    "train": 4183,
+    "val": 899,
+    "test": 906
 }
 
 for split in splits:
 
-    pest_path = os.path.join(base_path, split, "pest")
+    pest_path = os.path.join(base_path, split, "noise")
 
     images = os.listdir(pest_path)
     random.shuffle(images)

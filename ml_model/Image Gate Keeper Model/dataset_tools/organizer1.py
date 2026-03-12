@@ -2,7 +2,7 @@ import os
 import random
 import shutil
 
-source_dir = r"C:\My\RIT\S8\Project\Dataset\Image\Pest"
+source_dir = r"C:\My\RIT\S8\Project\Dataset\Image\Pest - Latest"
 
 train_dir = r"C:\My\RIT\S8\Project\WingTrace\ml_model\Image Gate Keeper Model\dataset\train\pest"
 val_dir = r"C:\My\RIT\S8\Project\WingTrace\ml_model\Image Gate Keeper Model\dataset\val\pest"
@@ -20,7 +20,7 @@ for species in os.listdir(source_dir):
         continue
 
     images = [f for f in os.listdir(species_path)
-              if f.lower().endswith((".jpg",".jpeg",".png",".bmp"))]
+              if f.lower().endswith((".jpg",".jpeg",".png",".bmp",".webp"))]
 
     random.shuffle(images)
 
