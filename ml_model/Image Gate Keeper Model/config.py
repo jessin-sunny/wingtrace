@@ -6,7 +6,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATASET_PATH = os.path.join(BASE_DIR, "dataset")
 
 BATCH_SIZE = 16
-EPOCHS = 5
+EPOCHS = 15
 LR = 0.0002
 
 IMAGE_SIZE = 224
