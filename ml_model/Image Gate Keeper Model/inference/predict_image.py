@@ -60,7 +60,7 @@ def main():
     # ])
 
     # Direct image path
-    image_path = r"C:\My\RIT\S8\Project\Dataset\Image\Mosquito Unseen\Culex\culex1.jpg"
+    image_path = r"C:\My\RIT\S8\Project\Dataset\Image\Gate - Unseen\mosquito\1280px-Mosquito_Tasmania.jpg"
 
     image = Image.open(image_path).convert("RGB")
 

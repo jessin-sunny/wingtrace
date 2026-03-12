@@ -5,8 +5,8 @@ import re
 from collections import defaultdict
 
 sources = [
-    r"C:\Users\jessi\Downloads\archive\train\Aedes",
-    r"C:\Users\jessi\Downloads\archive\test\Aedes"
+    r"C:\Users\jessi\Downloads\archive\train\Culex",
+    r"C:\Users\jessi\Downloads\archive\test\Culex"
 ]
 
 train_out = r"C:\My\RIT\S8\Project\WingTrace\ml_model\Image Gate Keeper Model\dataset\train\mosquito"
@@ -19,7 +19,7 @@ os.makedirs(test_out, exist_ok=True)
 
 groups = defaultdict(list)
 
-pattern = re.compile(r'^(Aedes\d+)')
+pattern = re.compile(r'^(Culex\d+)')
 
 # collect files from both train and test
 for src in sources:
