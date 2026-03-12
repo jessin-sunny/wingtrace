@@ -2,8 +2,8 @@
 ml_model/Mosquito Image Model/Dataset/
 ml_model/Pest Image Model/Dataset
 ml_model/Image Gate Keeper Model/dataset
-ml_model/Mosquito_Audio_Model/dataset
-ml_model/Mosquito Audio Detector/dataset
+# ml_model/Mosquito_Audio_Model/dataset
+# ml_model/Mosquito Audio Detector/dataset
 # Python cache
 __pycache__/
 *.pyc
