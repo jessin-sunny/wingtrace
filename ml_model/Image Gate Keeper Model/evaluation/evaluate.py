@@ -8,7 +8,7 @@ import numpy as np
 
 from sklearn.metrics import confusion_matrix, classification_report, accuracy_score
 
-from models.resnet18_image_gatekeeper import get_resnet18
+from models.resnet50_image_gatekeeper import get_resnet50
 from utils.dataset_loader import get_dataloaders
 from config import *
 
@@ -22,7 +22,7 @@ def evaluate():
     train_loader, val_loader, test_loader = get_dataloaders()
 
     # Load model
-    model = get_resnet18()
+    model = get_resnet50()
 
     model.load_state_dict(
         torch.load(MODEL_SAVE_PATH, map_location=device)

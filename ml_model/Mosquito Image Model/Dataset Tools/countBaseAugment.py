@@ -2,7 +2,7 @@ import os
 from collections import defaultdict
 
 # Dataset path
-dataset_path = r"C:\My\RIT\S8\Project\WingTrace\ml_model\Mosquito Image Model\Dataset\val"
+dataset_path = r"C:\My\RIT\S8\Project\Dataset\Image\Mosquito"
 
 print("\nDATASET ANALYSIS\n")
 
