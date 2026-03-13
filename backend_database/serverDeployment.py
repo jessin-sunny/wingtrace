@@ -13,6 +13,7 @@ from flask_sock import Sock
 from threading import Lock
 from supabase import create_client
 from google.api_core.exceptions import DeadlineExceeded
+from gradio_client import Client, handle_file
 
 
 app = Flask(__name__)
@@ -35,6 +36,8 @@ SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+# HuggingFace audio model
+hf_client = Client("wingtrace/audiomodel")
 
 
 devices_lock = Lock()   # Thread Safety
@@ -691,7 +694,20 @@ def stop_audio():
         "deviceId": device_id
     }), 200
 
+# ===============================
+# HUGGING PHASE
+# ===============================
+def send_audio_to_model(filepath):
+    try:
+        result = hf_client.predict(
+            audio_filepath=handle_file(filepath),
+            api_name="/analyze_wingbeat",
+        )
 
+        print(f"[AI RESULT] {result}")
+
+    except Exception as e:
+        print(f"[AI ERROR] {e}")
 
 # ===============================
 # AUDIO WEBSOCKET
@@ -737,17 +753,32 @@ def store_audio_metadata(device_id, audio_url):
     })
 
 def flush_audio_chunk(device_id, raw_audio):
+
     filename = f"{device_id}_{int(time.time())}.wav"
     filepath = os.path.join(AUDIO_DIR, filename)
 
+    # Save WAV file
     with wave.open(filepath, "wb") as wf:
         wf.setnchannels(CHANNELS)
         wf.setsampwidth(SAMPLE_WIDTH)
         wf.setframerate(SAMPLE_RATE)
         wf.writeframes(raw_audio)
 
-    public_url = upload_to_supabase(filepath, filename)
-    store_audio_metadata(device_id, public_url)
+    # -------- SUPABASE UPLOAD THREAD --------
+    def upload_task():
+        try:
+            public_url = upload_to_supabase(filepath, filename)
+            store_audio_metadata(device_id, public_url)
+        except Exception as e:
+            print(f"[SUPABASE ERROR] {e}")
+
+    # -------- AI INFERENCE THREAD --------
+    def ai_task():
+        send_audio_to_model(filepath)
+
+    # Run both in parallel
+    threading.Thread(target=upload_task, daemon=True).start()
+    threading.Thread(target=ai_task, daemon=True).start()
 
     print(f"[AUDIO SAVED] {filename}")
 
