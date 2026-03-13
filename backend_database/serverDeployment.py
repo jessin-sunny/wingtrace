@@ -1085,16 +1085,11 @@ def flush_audio_chunk(device_id, raw_audio):
     store_audio_metadata(device_id, public_url)
 
     # 3️⃣ Send audio to HuggingFace AI
-    def ai_inference_task():
-        try:
-            send_audio_to_model(filepath, device_id)
+    try:
+        send_audio_to_model(filepath, device_id)
 
-        except Exception as e:
-            print(f"[AI ERROR] {e}")
-
-    # 4️⃣ Run both tasks in parallel
-    threading.Thread(target=supabase_upload_task, daemon=True).start()
-    threading.Thread(target=ai_inference_task, daemon=True).start()
+    except Exception as e:
+        print(f"[AI ERROR] {e}")
 
 @sock.route("/startAudioStream")
 def audio_stream(ws):
