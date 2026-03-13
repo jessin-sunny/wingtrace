@@ -1065,6 +1065,9 @@ def store_audio_metadata(device_id, audio_url):
 # ===============================
 # PROCESS 5-SECOND AUDIO CHUNK
 # ===============================
+# ===============================
+# PROCESS 5-SECOND AUDIO CHUNK
+# ===============================
 def flush_audio_chunk(device_id, raw_audio):
 
     timestamp = int(time.time())
@@ -1083,11 +1086,19 @@ def flush_audio_chunk(device_id, raw_audio):
     public_url = upload_audio_to_supabase(filepath, filename)
     store_audio_metadata(device_id, public_url)
 
+        finally:
+            # remove local file after upload
+            if os.path.exists(filepath):
+                os.remove(filepath)
+
     # --------------------------------
-    # 3. Send audio to AI model
+    # 3. Send audio to HuggingFace AI
     # --------------------------------
     def ai_inference_task():
-        send_audio_to_model(filepath, device_id)
+        try:
+            send_audio_to_model(filepath, device_id)
+        except Exception as e:
+            print(f"[AI ERROR] {e}")
 
     # --------------------------------
     # 4. Run both tasks in parallel
