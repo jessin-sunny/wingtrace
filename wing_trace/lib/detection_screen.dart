@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'pest_chatbot_screen.dart';
+import 'pest_details_screen.dart';
 
 class DetectionScreen extends StatefulWidget {
   const DetectionScreen({super.key});
@@ -105,11 +106,41 @@ class _DetectionScreenState extends State<DetectionScreen> {
       setState(() => _rawResult = result);
 
       final String? category = _extractCategory(result);
+
       if (category != null) {
-        await Future.wait([
-          _fetchPestInfo(category),
-          _saveDetectionToFirestore(result, category),
-        ]);
+        // Fetch pest info
+        await _fetchPestInfo(category);
+
+        // Save to Firestore
+        await _saveDetectionToFirestore(result, category);
+
+        // Navigate to details screen
+        if (mounted) {
+          final (pestType, pestCategory) = _splitResult(result);
+          await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => PestDetailsScreen(
+                imageFile: _selectedImage!,
+                pestType: pestType,
+                pestCategory: pestCategory,
+                pestInfo: _pestInfo,
+              ),
+            ),
+          );
+
+          // Reset state after returning from details screen
+          if (mounted) {
+            setState(() {
+              _selectedImage = null;
+              _rawResult = null;
+              _pestInfo = null;
+            });
+          }
+        }
+      } else {
+        // No pest detected - just show the no result card on current screen
+        setState(() {});
       }
     } catch (e) {
       setState(() => _errorMessage = 'Analysis failed. Please try again.');
@@ -164,106 +195,303 @@ class _DetectionScreenState extends State<DetectionScreen> {
   }
 
   /// Calls the Gradio model using the correct API prefix and endpoint from /config.
+  // Future<String> _callGradioModel(String base64DataUrl) async {
+  //   final base = await _initGradioBase();
+
+  //   // ── Get API structure from /config ──
+  //   String apiPrefix = '/api';
+  //   List<String> endpointNames = [];
+
+  //   try {
+  //     final configResp = await http.get(
+  //       Uri.parse('$base/config'),
+  //       headers: {'Accept': 'application/json'},
+  //     ).timeout(const Duration(seconds: 10));
+
+  //     if (configResp.statusCode == 200) {
+  //       final config = jsonDecode(configResp.body) as Map<String, dynamic>;
+  //       apiPrefix = config['api_prefix']?.toString() ?? '/api';
+
+  //       // Extract endpoint names from dependencies
+  //       final dependencies = config['dependencies'] as List?;
+  //       if (dependencies != null) {
+  //         for (var dep in dependencies) {
+  //           if (dep is Map) {
+  //             final apiName = dep['api_name']?.toString();
+  //             if (apiName != null && apiName.isNotEmpty && apiName != 'null') {
+  //               endpointNames.add(apiName);
+  //             }
+  //           }
+  //         }
+  //       }
+
+  //       debugPrint('API prefix: $apiPrefix');
+  //       debugPrint('Available endpoints: $endpointNames');
+  //     }
+  //   } catch (e) {
+  //     debugPrint('/config error: $e');
+  //   }
+
+  //   // Try each discovered endpoint name
+  //   for (final endpointName in endpointNames) {
+  //     try {
+  //       final r = await http.post(
+  //         Uri.parse('$base$apiPrefix/$endpointName'),
+  //         headers: {'Content-Type': 'application/json'},
+  //         body: jsonEncode({'data': [base64DataUrl]}),
+  //       ).timeout(const Duration(seconds: 90));
+
+  //       debugPrint('$apiPrefix/$endpointName ${r.statusCode}: ${r.body.substring(0, min(300, r.body.length))}');
+
+  //       if (r.statusCode == 200) {
+  //         final respData = jsonDecode(r.body);
+
+  //         // Handle direct response: {"data": [...]}
+  //         if (respData is Map && respData.containsKey('data')) {
+  //           final dl = respData['data'] as List?;
+  //           if (dl != null && dl.isNotEmpty) {
+  //             return dl[0].toString().trim();
+  //           }
+  //         }
+
+  //         // Handle streaming response: {"event_id": "..."}
+  //         if (respData is Map && respData.containsKey('event_id')) {
+  //           final eventId = respData['event_id'] as String;
+  //           return await _streamGradioResult(
+  //             Uri.parse('$base$apiPrefix/$endpointName/$eventId')
+  //           );
+  //         }
+  //       }
+  //     } catch (e) {
+  //       debugPrint('$apiPrefix/$endpointName error: $e');
+  //     }
+  //   }
+
+  //   // Fallback: try predict_bug and predict with fn_index=0
+  //   final fallbackNames = ['predict_bug', 'predict'];
+  //   for (final name in fallbackNames) {
+  //     try {
+  //       final r = await http.post(
+  //         Uri.parse('$base$apiPrefix/$name'),
+  //         headers: {'Content-Type': 'application/json'},
+  //         body: jsonEncode({'data': [base64DataUrl], 'fn_index': 0}),
+  //       ).timeout(const Duration(seconds: 90));
+
+  //       debugPrint('Fallback $apiPrefix/$name ${r.statusCode}');
+
+  //       if (r.statusCode == 200) {
+  //         final respData = jsonDecode(r.body);
+  //         if (respData is Map && respData.containsKey('data')) {
+  //           final dl = respData['data'] as List?;
+  //           if (dl != null && dl.isNotEmpty) {
+  //             return dl[0].toString().trim();
+  //           }
+  //         }
+  //       }
+  //     } catch (e) {
+  //       debugPrint('Fallback $apiPrefix/$name error: $e');
+  //     }
+  //   }
+
+  //   throw Exception('Failed to get prediction from Gradio API');
+  // }
   Future<String> _callGradioModel(String base64DataUrl) async {
-    final base = await _initGradioBase();
+    const base = "https://wingtrace-wingmodel.hf.space";
 
-    // ── Get API structure from /config ──
-    String apiPrefix = '/api';
-    List<String> endpointNames = [];
+    // STEP 1: Upload the file to get a file reference
+    // Convert base64 data URL back to bytes
+    final base64Data = base64DataUrl.split(',')[1];
+    final bytes = base64Decode(base64Data);
 
-    try {
-      final configResp = await http.get(
-        Uri.parse('$base/config'),
-        headers: {'Accept': 'application/json'},
-      ).timeout(const Duration(seconds: 10));
+    // Determine mime type from data URL
+    final mimeMatch = RegExp(r'data:([^;]+);').firstMatch(base64DataUrl);
+    final mimeType = mimeMatch?.group(1) ?? 'image/jpeg';
+    final extension = mimeType.split('/').last;
 
-      if (configResp.statusCode == 200) {
-        final config = jsonDecode(configResp.body) as Map<String, dynamic>;
-        apiPrefix = config['api_prefix']?.toString() ?? '/api';
+    debugPrint('Uploading file: $mimeType, ${bytes.length} bytes');
 
-        // Extract endpoint names from dependencies
-        final dependencies = config['dependencies'] as List?;
-        if (dependencies != null) {
-          for (var dep in dependencies) {
-            if (dep is Map) {
-              final apiName = dep['api_name']?.toString();
-              if (apiName != null && apiName.isNotEmpty && apiName != 'null') {
-                endpointNames.add(apiName);
+    // Create multipart request for upload
+    final uploadRequest = http.MultipartRequest(
+      'POST',
+      Uri.parse('$base/gradio_api/upload'),
+    );
+
+    uploadRequest.files.add(
+      http.MultipartFile.fromBytes(
+        'files',
+        bytes,
+        filename: 'image.$extension',
+      ),
+    );
+
+    final uploadStreamedResponse = await uploadRequest.send().timeout(const Duration(seconds: 60));
+    final uploadResponse = await http.Response.fromStream(uploadStreamedResponse);
+
+    debugPrint('Upload response: ${uploadResponse.statusCode}, body: ${uploadResponse.body}');
+
+    if (uploadResponse.statusCode != 200) {
+      throw Exception('File upload failed: ${uploadResponse.statusCode}');
+    }
+
+    // Parse upload response to get file reference
+    final uploadData = jsonDecode(uploadResponse.body);
+
+    debugPrint('Upload data type: ${uploadData.runtimeType}');
+
+    String? filePath;
+    dynamic fileObject;
+
+    // Handle different response formats
+    if (uploadData is List && uploadData.isNotEmpty) {
+      filePath = uploadData[0].toString();
+
+      // Construct full file object for Gradio 6.x
+      fileObject = {
+        "path": filePath,
+        "url": "$base/gradio_api/file=$filePath",
+        "size": bytes.length,
+        "orig_name": "image.$extension",
+        "mime_type": mimeType,
+      };
+    } else if (uploadData is Map && uploadData['files'] != null) {
+      final files = uploadData['files'] as List;
+      if (files.isNotEmpty) {
+        filePath = files[0].toString();
+        fileObject = {
+          "path": filePath,
+          "url": "$base/gradio_api/file=$filePath",
+          "size": bytes.length,
+          "orig_name": "image.$extension",
+          "mime_type": mimeType,
+        };
+      }
+    }
+
+    if (filePath == null) {
+      throw Exception('No file reference returned from upload');
+    }
+
+    debugPrint('File path: $filePath');
+
+    // STEP 2: Send prediction request - try both formats
+    // Try with full file object first (Gradio 6.x style)
+    var response = await http.post(
+      Uri.parse("$base/gradio_api/call/predict_bug"),
+      headers: {"Content-Type": "application/json"},
+      body: jsonEncode({"data": [fileObject]}),
+    ).timeout(const Duration(seconds: 60));
+
+    debugPrint('POST call/predict_bug (with file object): ${response.statusCode}, body: ${response.body.substring(0, min(200, response.body.length))}');
+
+    // If that fails, try with just the path string
+    if (response.statusCode != 200 || jsonDecode(response.body)['event_id'] == null) {
+      debugPrint('Retrying with just file path...');
+      response = await http.post(
+        Uri.parse("$base/gradio_api/call/predict_bug"),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({"data": [filePath]}),
+      ).timeout(const Duration(seconds: 60));
+
+      debugPrint('POST call/predict_bug (with path): ${response.statusCode}');
+    }
+
+    debugPrint('POST call/predict_bug: ${response.statusCode}');
+
+    if (response.statusCode != 200) {
+      throw Exception("Prediction request failed");
+    }
+
+    final body = jsonDecode(response.body);
+    final eventId = body["event_id"];
+
+    debugPrint('Event ID: $eventId');
+
+    if (eventId == null) {
+      throw Exception("No event_id returned from server");
+    }
+
+    // STEP 3: read result stream using proper streaming
+    final client = http.Client();
+    final request = http.Request('GET', Uri.parse("$base/gradio_api/call/predict_bug/$eventId"));
+    request.headers['Accept'] = 'text/event-stream';
+
+    final streamedResponse = await client.send(request).timeout(const Duration(seconds: 90));
+
+    debugPrint('Stream response: ${streamedResponse.statusCode}');
+
+    final completer = Completer<String>();
+    String buffer = '';
+
+    streamedResponse.stream.transform(const Utf8Decoder()).listen(
+      (chunk) {
+        debugPrint('Raw chunk: ${chunk.substring(0, min(300, chunk.length))}');
+
+        buffer += chunk;
+        final lines = buffer.split('\n');
+        buffer = lines.removeLast(); // keep incomplete line
+
+        for (final line in lines) {
+          debugPrint('Line: ${line.length > 100 ? line.substring(0, 100) + "..." : line}');
+
+          if (line.startsWith('data: ')) {
+            final payload = line.substring(6).trim();
+
+            if (payload.isEmpty || payload == 'null') continue;
+
+            debugPrint('SSE payload: ${payload.substring(0, min(200, payload.length))}');
+
+            try {
+              final decoded = jsonDecode(payload);
+
+              // Try multiple formats
+              String? result;
+
+              // Format 1: {output: {data: [...]}}
+              if (decoded is Map && decoded['output'] is Map) {
+                final output = decoded['output'] as Map;
+                if (output['data'] is List && (output['data'] as List).isNotEmpty) {
+                  result = output['data'][0]?.toString();
+                }
               }
+
+              // Format 2: Direct array ["result"]
+              if (result == null && decoded is List && decoded.isNotEmpty) {
+                result = decoded[0]?.toString();
+              }
+
+              // Format 3: {data: [...]}
+              if (result == null && decoded is Map && decoded['data'] is List) {
+                final dataList = decoded['data'] as List;
+                if (dataList.isNotEmpty) {
+                  result = dataList[0]?.toString();
+                }
+              }
+
+              if (result != null && result.isNotEmpty && !completer.isCompleted) {
+                debugPrint('Found result: $result');
+                completer.complete(result);
+              }
+            } catch (e) {
+              debugPrint('Parse error: $e');
             }
           }
         }
-
-        debugPrint('API prefix: $apiPrefix');
-        debugPrint('Available endpoints: $endpointNames');
-      }
-    } catch (e) {
-      debugPrint('/config error: $e');
-    }
-
-    // Try each discovered endpoint name with Gradio 6.x /call/ pattern
-    for (final endpointName in endpointNames) {
-      try {
-        final r = await http.post(
-          Uri.parse('$base$apiPrefix/call/$endpointName'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({'data': [base64DataUrl]}),
-        ).timeout(const Duration(seconds: 30));
-
-        debugPrint('$apiPrefix/call/$endpointName ${r.statusCode}: ${r.body.substring(0, min(300, r.body.length))}');
-
-        if (r.statusCode == 200) {
-          final respData = jsonDecode(r.body);
-
-          // Handle direct response: {"data": [...]}
-          if (respData is Map && respData.containsKey('data')) {
-            final dl = respData['data'] as List?;
-            if (dl != null && dl.isNotEmpty) {
-              return dl[0].toString().trim();
-            }
-          }
-
-          // Handle streaming response: {"event_id": "..."}
-          if (respData is Map && respData.containsKey('event_id')) {
-            final eventId = respData['event_id'] as String;
-            debugPrint('Streaming from event_id: $eventId');
-            return await _streamGradioResult(
-              Uri.parse('$base$apiPrefix/call/$endpointName/$eventId')
-            );
-          }
+      },
+      onDone: () {
+        if (!completer.isCompleted) {
+          completer.completeError('Stream ended without result');
         }
-      } catch (e) {
-        debugPrint('$apiPrefix/call/$endpointName error: $e');
-      }
-    }
-
-    // Fallback: try predict_bug and predict with fn_index=0
-    final fallbackNames = ['predict_bug', 'predict'];
-    for (final name in fallbackNames) {
-      try {
-        final r = await http.post(
-          Uri.parse('$base$apiPrefix/$name'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({'data': [base64DataUrl], 'fn_index': 0}),
-        ).timeout(const Duration(seconds: 90));
-
-        debugPrint('Fallback $apiPrefix/$name ${r.statusCode}');
-
-        if (r.statusCode == 200) {
-          final respData = jsonDecode(r.body);
-          if (respData is Map && respData.containsKey('data')) {
-            final dl = respData['data'] as List?;
-            if (dl != null && dl.isNotEmpty) {
-              return dl[0].toString().trim();
-            }
-          }
+        client.close();
+      },
+      onError: (e) {
+        if (!completer.isCompleted) {
+          completer.completeError(e);
         }
-      } catch (e) {
-        debugPrint('Fallback $apiPrefix/$name error: $e');
-      }
-    }
+        client.close();
+      },
+    );
 
-    throw Exception('Failed to get prediction from Gradio API');
+    return await completer.future;
   }
 
   /// Reads an SSE stream from [uri] and returns the first non-empty result.
@@ -363,10 +591,22 @@ class _DetectionScreenState extends State<DetectionScreen> {
         .replaceFirst(RegExp(r'^Result:\s*', caseSensitive: false), '')
         .trim();
 
-    // No "->" means the model returned an unrecognised / no-detection result
-    if (!cleaned.contains('->')) return null;
+    debugPrint('Extracting category from: $cleaned');
 
-    final category = cleaned.split('->').last.trim().toLowerCase();
+    // Handle both "->" and "→" (Unicode arrow)
+    if (!cleaned.contains('->') && !cleaned.contains('→')) {
+      debugPrint('No arrow found, returning null');
+      return null;
+    }
+
+    // Split by either "->" or "→"
+    final parts = cleaned.contains('→')
+        ? cleaned.split('→')
+        : cleaned.split('->');
+
+    final category = parts.last.trim().toLowerCase();
+
+    debugPrint('Extracted category: $category');
 
     // Treat empty or generic labels as no-result
     const noResultLabels = {'unknown', 'none', 'no result', 'not detected', 'n/a', ''};
@@ -423,7 +663,12 @@ class _DetectionScreenState extends State<DetectionScreen> {
   /// Splits "Mosquito -> Aedes" into type = "Mosquito", category = "Aedes"
   (String, String) _splitResult(String raw) {
     final cleaned = raw.replaceFirst(RegExp(r'^Result:\s*', caseSensitive: false), '');
-    final parts = cleaned.split('->');
+
+    // Handle both ASCII and Unicode arrows
+    final parts = cleaned.contains('→')
+        ? cleaned.split('→')
+        : cleaned.split('->');
+
     if (parts.length >= 2) {
       return (parts[0].trim(), parts[1].trim());
     }
@@ -461,12 +706,8 @@ class _DetectionScreenState extends State<DetectionScreen> {
             const SizedBox(height: 20),
             if (_isAnalyzing) _buildAnalyzingCard(),
             if (_errorMessage != null && !_isAnalyzing) _buildErrorCard(),
-            if (_rawResult != null && !_isAnalyzing) ...[
-              if (_extractCategory(_rawResult!) != null)
-                _buildResultSection()
-              else
-                _buildNoResultCard(),
-            ],
+            if (_rawResult != null && !_isAnalyzing && _extractCategory(_rawResult!) == null)
+              _buildNoResultCard(),
             const SizedBox(height: 20),
             _buildActionButton(),
           ],
@@ -598,161 +839,6 @@ class _DetectionScreenState extends State<DetectionScreen> {
             'The model could not identify a pest in this image.\nTry a clearer, well-lit photo with the insect in focus.',
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 13, color: Colors.orange[700], height: 1.4),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildResultSection() {
-    final (pestType, pestCategory) = _splitResult(_rawResult!);
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        // ── Identification Badge ──────────────────────────────────────────
-        Container(
-          padding: const EdgeInsets.all(18),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [Colors.green[700]!, Colors.green[500]!],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            borderRadius: BorderRadius.circular(18),
-          ),
-          child: Row(
-            children: [
-              const Icon(Icons.check_circle_rounded,
-                  color: Colors.white, size: 32),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Pest Identified',
-                      style: TextStyle(color: Colors.white70, fontSize: 12),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      pestCategory,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    Text(
-                      pestType,
-                      style: const TextStyle(
-                          color: Colors.white70, fontSize: 13),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-
-        const SizedBox(height: 16),
-
-        // ── Server Info Card ──────────────────────────────────────────────
-        if (_pestInfo != null) _buildPestInfoCard(_pestInfo!),
-
-        const SizedBox(height: 16),
-
-        // ── Consult Tracy ─────────────────────────────────────────────────
-        OutlinedButton.icon(
-          onPressed: () => Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const PestChatbotScreen()),
-          ),
-          icon: const Icon(Icons.smart_toy_outlined, color: Colors.green),
-          label: const Text(
-            'Ask Tracy About This Pest',
-            style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold),
-          ),
-          style: OutlinedButton.styleFrom(
-            side: const BorderSide(color: Colors.green),
-            padding: const EdgeInsets.symmetric(vertical: 14),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(30),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildPestInfoCard(Map<String, dynamic> info) {
-    // Filter out null/empty values and internal keys starting with '_'
-    final entries = info.entries
-        .where((e) =>
-            !e.key.startsWith('_') &&
-            e.value != null &&
-            e.value.toString().trim().isNotEmpty)
-        .toList();
-
-    if (entries.isEmpty) return const SizedBox.shrink();
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.green.withOpacity(0.25)),
-        boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 10)
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.info_outline_rounded,
-                  color: Colors.green[700], size: 20),
-              const SizedBox(width: 8),
-              Text(
-                'Pest Information',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: Colors.green[700],
-                  fontSize: 15,
-                ),
-              ),
-            ],
-          ),
-          const Divider(height: 22),
-          ...entries.map(
-            (e) => Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    _formatKey(e.key),
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 12,
-                      color: Colors.black54,
-                      letterSpacing: 0.4,
-                    ),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    e.value.toString(),
-                    style: const TextStyle(
-                      fontSize: 14,
-                      color: Colors.black87,
-                      height: 1.45,
-                    ),
-                  ),
-                ],
-              ),
-            ),
           ),
         ],
       ),
