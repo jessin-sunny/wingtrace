@@ -5,3 +5,4 @@ gevent>=24.10.1
 firebase-admin
 google-cloud-firestore
 supabase
+gradio_client
