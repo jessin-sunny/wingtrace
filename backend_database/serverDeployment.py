@@ -209,6 +209,71 @@ def get_weather():
 
     return jsonify(weather_data), 200
 
+# ===============================
+# SPECIES DATA
+# ===============================
+
+def get_species_images(category, species):
+
+    bucket = supabase.storage.from_("categories")
+
+    species_id = species.strip().lower().replace(" ", "_")
+
+    folder = f"{category}/{species_id}"
+
+    images = []
+
+    try:
+
+        res = bucket.list(folder)
+
+        if res:
+            for file in res:
+
+                name = file.get("name")
+
+                if name:
+                    path = f"{folder}/{name}"
+
+                    url = bucket.get_public_url(path)
+
+                    images.append(url)
+
+    except Exception as e:
+        print(f"[IMAGE LIST ERROR] {e}")
+
+    return images
+
+
+@app.route("/category/<doc_id>", methods=["GET"])
+def get_category(doc_id):
+
+    doc_id = doc_id.strip().lower().replace(" ", "_")
+
+    try:
+
+        doc = fs.collection("categories").document(doc_id).get()
+
+        if not doc.exists:
+            return jsonify({"error": "Category not found"}), 404
+
+        data = doc.to_dict()
+
+        category = data.get("category")
+
+        if not category:
+            return jsonify({"error": "Category field missing"}), 500
+
+        # fetch images from Supabase
+        images = get_species_images(category, doc_id)
+
+        data["images"] = images
+
+        return jsonify(data), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 
 # ===============================
 # CONNECTION CONTROL
@@ -530,7 +595,6 @@ def get_command():
     return command, 200
 
 
-
 # ===============================
 # ADMIN CONTROL
 # ===============================
@@ -577,6 +641,230 @@ def add_device():
         "status": "SUCCESS",
         "deviceId": device_id
     }), 201
+
+def parse_json_fields(data, fields):
+
+    for f in fields:
+        if f in data:
+            try:
+                data[f] = json.loads(data[f])
+            except:
+                pass
+
+# ADMIN: Add new species information to database
+@app.route("/insertCategory", methods=["POST"])
+def insert_category():
+
+    data = request.form.to_dict()
+
+    category = data.get("category")
+    if not category:
+        return jsonify({"error": "category field required"}), 400
+
+
+    mosquito_fields = [
+        "name","category","default_risk","diseases","bite_time","common_name","scientific_name",
+        "breeding_sites","subspecies","risk_radius",
+        "public_actions","control_methods"
+    ]
+
+    pest_fields = [
+        "name","category","default_risk","crops_affected","active_period",
+        "habitat","damage_symptoms","subspecies","common_name","scientific_name",
+        "public_actions","control_methods"
+    ]
+
+
+    if category == "mosquito":
+        required_fields = mosquito_fields
+    elif category == "pest":
+        required_fields = pest_fields
+    else:
+        return jsonify({"error": "category must be 'mosquito' or 'pest'"}), 400
+
+
+    # Convert JSON string fields to Python objects
+    parse_json_fields(data, [
+        "diseases",
+        "bite_time",
+        "breeding_sites",
+        "subspecies",
+        "public_actions",
+        "control_methods",
+        "crops_affected",
+        "active_period",
+        "habitat",
+        "damage_symptoms"
+    ])
+
+
+    missing = [f for f in required_fields if f not in data]
+    if missing:
+        return jsonify({
+            "error": "Missing required fields",
+            "missing": missing
+        }), 400
+
+
+    name = data["name"]
+    doc_id = name.strip().lower().replace(" ", "_")
+
+    doc_ref = fs.collection("categories").document(doc_id)
+
+    if doc_ref.get().exists:
+        return jsonify({"error": "Species already exists"}), 409
+
+
+    # ============================
+    # IMAGE HANDLING (0–N images)
+    # ============================
+
+    files = request.files.getlist("images")
+
+    for file in files:
+
+        if file and file.filename != "":
+            try:
+
+                image_url = upload_category_image_to_supabase(
+                    file,
+                    category,
+                    name
+                )
+
+            except Exception as e:
+                return jsonify({"error": f"Image upload failed: {str(e)}"}), 500
+
+
+    data["createdAt"] = firestore.SERVER_TIMESTAMP
+
+
+    try:
+
+        doc_ref.set(data)
+
+        print(f"[CATEGORY INSERTED] {doc_id}")
+
+        return jsonify({
+            "status": "SUCCESS",
+            "documentId": doc_id
+        }), 201
+
+    except Exception as e:
+
+        return jsonify({"error": str(e)}), 500
+
+# ADMIN: Update species information to database
+@app.route("/updateCategory", methods=["POST"])
+def update_category():
+
+    data = request.form.to_dict()
+
+    name = data.get("name")
+    if not name:
+        return jsonify({"error": "name required"}), 400
+
+
+    doc_id = name.strip().lower().replace(" ", "_")
+
+    doc_ref = fs.collection("categories").document(doc_id)
+    doc = doc_ref.get()
+
+    if not doc.exists:
+        return jsonify({"error": "Category not found"}), 404
+
+
+    existing_data = doc.to_dict()
+
+    category = data.get("category", existing_data.get("category"))
+
+    if not category:
+        return jsonify({"error": "category missing"}), 400
+
+
+    # Convert JSON string fields to Python objects
+    parse_json_fields(data, [
+        "diseases",
+        "bite_time",
+        "breeding_sites",
+        "subspecies",
+        "public_actions",
+        "control_methods",
+        "crops_affected",
+        "active_period",
+        "habitat",
+        "damage_symptoms"
+    ])
+
+
+    # ============================
+    # IMAGE HANDLING (0–N images)
+    # ============================
+
+    images = existing_data.get("images", [])
+
+    files = request.files.getlist("images")
+
+    for file in files:
+
+        if file and file.filename != "":
+            try:
+
+                image_url = upload_category_image_to_supabase(
+                    file,
+                    category,
+                    name
+                )
+
+            except Exception as e:
+                return jsonify({"error": f"Image upload failed: {str(e)}"}), 500
+
+
+    update_data = {k: v for k, v in data.items() if k != "name"}
+
+    update_data["updatedAt"] = firestore.SERVER_TIMESTAMP
+
+
+    try:
+
+        doc_ref.set(update_data, merge=True)
+
+        print(f"[CATEGORY UPDATED] {doc_id}")
+
+        return jsonify({
+            "status": "UPDATED",
+            "documentId": doc_id
+        }), 200
+
+    except Exception as e:
+
+        return jsonify({"error": str(e)}), 500
+
+def upload_category_image_to_supabase(file, category, species):
+
+    bucket = supabase.storage.from_("categories")
+
+    species_id = species.strip().lower().replace(" ", "_")
+
+    # Extract original extension
+    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "jpg"
+
+    filename = f"{species_id}_{uuid.uuid4().hex}.{ext}"
+
+    storage_path = f"{category}/{species_id}/{filename}"
+
+    data = file.read()
+
+    res = bucket.upload(
+        storage_path,
+        data,
+        file_options={"content-type": file.content_type}
+    )
+
+    if isinstance(res, dict) and res.get("error"):
+        raise Exception(res["error"])
+
+    return bucket.get_public_url(storage_path)
 
 # ===============================
 # AUDIO CONTROLS
@@ -734,11 +1022,7 @@ def send_audio_to_model(filepath, device_id):
 # ===============================
 # AUDIO WEBSOCKET
 # ===============================
-# ===============================
-# SUPABASE AUDIO UPLOAD
-# ===============================
 def upload_audio_to_supabase(filepath, filename):
-
     with open(filepath, "rb") as f:
         audio_bytes = f.read()
 
@@ -797,18 +1081,8 @@ def flush_audio_chunk(device_id, raw_audio):
         wf.setframerate(SAMPLE_RATE)
         wf.writeframes(raw_audio)
 
-    print(f"[AUDIO SAVED] {filename}")
-
-    # 2️⃣ Upload to Supabase
-    def supabase_upload_task():
-        try:
-            audio_url = upload_audio_to_supabase(filepath, filename)
-            store_audio_metadata(device_id, audio_url)
-
-            print(f"[SUPABASE UPLOAD] {audio_url}")
-
-        except Exception as e:
-            print(f"[SUPABASE ERROR] {e}")
+    public_url = upload_audio_to_supabase(filepath, filename)
+    store_audio_metadata(device_id, public_url)
 
     # 3️⃣ Send audio to HuggingFace AI
     def ai_inference_task():
