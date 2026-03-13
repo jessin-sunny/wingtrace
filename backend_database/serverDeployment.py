@@ -985,14 +985,36 @@ def stop_audio():
 # ===============================
 # HUGGING PHASE
 # ===============================
-def send_audio_to_model(filepath):
+# ===============================
+# HUGGINGFACE INFERENCE
+# ===============================
+def send_audio_to_model(filepath, device_id):
+
     try:
         result = hf_client.predict(
             audio_filepath=handle_file(filepath),
-            api_name="/analyze_wingbeat",
+            api_name="/analyze_wingbeat"
         )
 
-        print(f"[AI RESULT] {result}")
+        message = result[0]
+        prediction = result[1]
+
+        species = prediction["label"]
+        confidence = prediction["confidences"][0]["confidence"]
+
+        print(f"[AI RESULT] {species} | Confidence: {confidence}")
+
+        # Save result to Firebase
+        detection_data = {
+            "species": species,
+            "confidence": confidence,
+            "message": message,
+            "timestamp": int(time.time())
+        }
+
+        rtdb.reference(f"devices/{device_id}/detections").push(detection_data)
+
+        print(f"[DETECTION STORED] {device_id}")
 
     except Exception as e:
         print(f"[AI ERROR] {e}")
@@ -1002,18 +1024,18 @@ def send_audio_to_model(filepath):
 # ===============================
 def upload_audio_to_supabase(filepath, filename):
     with open(filepath, "rb") as f:
-        data = f.read()
+        audio_bytes = f.read()
 
     bucket = supabase.storage.from_("audio-recordings")
 
-    res = bucket.upload(
+    response = bucket.upload(
         filename,
-        data,
+        audio_bytes,
         file_options={"content-type": "audio/wav"}
     )
 
-    if hasattr(res, "error") and res.error:
-        raise Exception(res.error)
+    if hasattr(response, "error") and response.error:
+        raise Exception(response.error)
 
     return bucket.get_public_url(filename)
 
@@ -1040,12 +1062,18 @@ def store_audio_metadata(device_id, audio_url):
         "recentRecordings": recordings
     })
 
+# ===============================
+# PROCESS 5-SECOND AUDIO CHUNK
+# ===============================
 def flush_audio_chunk(device_id, raw_audio):
 
-    filename = f"{device_id}_{int(time.time())}.wav"
+    timestamp = int(time.time())
+    filename = f"{device_id}_{timestamp}.wav"
     filepath = os.path.join(AUDIO_DIR, filename)
 
-    # Save WAV file
+    # --------------------------------
+    # 1. Save raw PCM as WAV
+    # --------------------------------
     with wave.open(filepath, "wb") as wf:
         wf.setnchannels(CHANNELS)
         wf.setsampwidth(SAMPLE_WIDTH)
@@ -1055,7 +1083,17 @@ def flush_audio_chunk(device_id, raw_audio):
     public_url = upload_audio_to_supabase(filepath, filename)
     store_audio_metadata(device_id, public_url)
 
-    print(f"[AUDIO SAVED] {filename}")
+    # --------------------------------
+    # 3. Send audio to AI model
+    # --------------------------------
+    def ai_inference_task():
+        send_audio_to_model(filepath, device_id)
+
+    # --------------------------------
+    # 4. Run both tasks in parallel
+    # --------------------------------
+    threading.Thread(target=supabase_upload_task, daemon=True).start()
+    threading.Thread(target=ai_inference_task, daemon=True).start()
 
 @sock.route("/startAudioStream")
 def audio_stream(ws):
