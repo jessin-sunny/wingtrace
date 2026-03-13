@@ -1074,9 +1074,7 @@ def flush_audio_chunk(device_id, raw_audio):
     filename = f"{device_id}_{timestamp}.wav"
     filepath = os.path.join(AUDIO_DIR, filename)
 
-    # --------------------------------
-    # 1. Save raw PCM as WAV
-    # --------------------------------
+    # 1️⃣ Save raw PCM as WAV
     with wave.open(filepath, "wb") as wf:
         wf.setnchannels(CHANNELS)
         wf.setsampwidth(SAMPLE_WIDTH)
@@ -1086,23 +1084,15 @@ def flush_audio_chunk(device_id, raw_audio):
     public_url = upload_audio_to_supabase(filepath, filename)
     store_audio_metadata(device_id, public_url)
 
-        finally:
-            # remove local file after upload
-            if os.path.exists(filepath):
-                os.remove(filepath)
-
-    # --------------------------------
-    # 3. Send audio to HuggingFace AI
-    # --------------------------------
+    # 3️⃣ Send audio to HuggingFace AI
     def ai_inference_task():
         try:
             send_audio_to_model(filepath, device_id)
+
         except Exception as e:
             print(f"[AI ERROR] {e}")
 
-    # --------------------------------
-    # 4. Run both tasks in parallel
-    # --------------------------------
+    # 4️⃣ Run both tasks in parallel
     threading.Thread(target=supabase_upload_task, daemon=True).start()
     threading.Thread(target=ai_inference_task, daemon=True).start()
 
