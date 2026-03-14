@@ -72,6 +72,7 @@ device_commands = {}   # pending commands
 audio_buffers = {}     # deviceId -> bytearray
 audio_locks = {}       # deviceId -> Lock
 
+
 CHUNK_SECONDS = 300
 CHUNK_BYTES = BYTES_PER_SECOND * CHUNK_SECONDS
 SAMPLE_RATE = 16000
