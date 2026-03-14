@@ -56,7 +56,7 @@ SAMPLE_RATE = 16000
 CHANNELS = 1
 SAMPLE_WIDTH = 2  # 16-bit PCM
 BYTES_PER_SECOND = SAMPLE_RATE * SAMPLE_WIDTH  # 32000
-
+CHUNK_BYTES = BYTES_PER_SECOND * 5             # 160000
 
 # ===============================
 # GLOBAL STATE (in-memory)
@@ -72,8 +72,7 @@ device_commands = {}   # pending commands
 audio_buffers = {}     # deviceId -> bytearray
 audio_locks = {}       # deviceId -> Lock
 
-CHUNK_SECONDS = 300
-CHUNK_BYTES = BYTES_PER_SECOND * CHUNK_SECONDS
+CHUNK_SECONDS = 5
 SAMPLE_RATE = 16000
 CHANNELS = 1
 SAMPLE_WIDTH = 2  # int16
