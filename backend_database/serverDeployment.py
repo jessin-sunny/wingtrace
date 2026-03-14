@@ -57,7 +57,6 @@ CHANNELS = 1
 SAMPLE_WIDTH = 2  # 16-bit PCM
 BYTES_PER_SECOND = SAMPLE_RATE * SAMPLE_WIDTH  # 32000
 
-
 # ===============================
 # GLOBAL STATE (in-memory)
 # ===============================
