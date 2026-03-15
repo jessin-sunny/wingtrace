@@ -6,7 +6,9 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 
 class PestChatbotScreen extends StatefulWidget {
-  const PestChatbotScreen({super.key});
+  final String? initialMessage;
+
+  const PestChatbotScreen({super.key, this.initialMessage});
 
   @override
   State<PestChatbotScreen> createState() => _PestChatbotScreenState();
@@ -26,6 +28,15 @@ class _PestChatbotScreenState extends State<PestChatbotScreen> {
   void initState() {
     super.initState();
     _fetchUserAvatar();
+
+    // Auto-send initial message if provided
+    if (widget.initialMessage != null && widget.initialMessage!.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final message = widget.initialMessage!;
+        _controller.text = message;
+        _sendMessage(message);
+      });
+    }
   }
 
   // 🔹 Step 1: RETRIEVAL - Fetching the specific user "Context"

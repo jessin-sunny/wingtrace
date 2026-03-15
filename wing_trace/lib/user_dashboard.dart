@@ -123,6 +123,13 @@ class _UserDashboardState extends State<UserDashboard> {
     }
   }
 
+  void _showSnackBar(String message) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
+      );
+    }
+  }
   void _showConnectionDialog() {
     showDialog(
       context: context,
@@ -157,9 +164,37 @@ class _UserDashboardState extends State<UserDashboard> {
                       Text("$_deviceName Ready", style: const TextStyle(color: Colors.white, fontSize: 18)),
                       const SizedBox(height: 20),
                       ElevatedButton(
-                        onPressed: () {
-                          setState(() => _isLive = true);
-                          Navigator.pop(context);
+                        onPressed: () async {
+                          // 1. Local UI feedback
+                          _showSnackBar("Establishing secure link...");
+
+                          try {
+                            // 2. Call your server's connect endpoint
+                            final response = await http.post(
+                              Uri.parse("https://wingtrace.onrender.com/connect"),
+                              headers: {"Content-Type": "application/json"},
+                              body: jsonEncode({
+                                "deviceId": _realDeviceId ?? "WT12345678",
+                                "userId": _user?.uid,
+                                "timestamp": DateTime.now().millisecondsSinceEpoch ~/ 1000,
+                              }),
+                            ).timeout(const Duration(seconds: 15));
+
+                            if (response.statusCode == 200) {
+                              // 3. Success: Update state and close dialog
+                              setState(() => _isLive = true);
+                              if (mounted) Navigator.pop(context);
+                              _showSnackBar("WingTrace is now Live!");
+                            } else {
+                              // Handle server-side errors (e.g., Device busy or offline)
+                              final errorMsg = jsonDecode(response.body)['error'] ?? "Unknown Error";
+                              _showSnackBar("Connection Failed: $errorMsg");
+                            }
+                          } catch (e) {
+                            // Handle network or timeout errors
+                            _showSnackBar("Network Error: Check your internet connection.");
+                            debugPrint("Connect Error: $e");
+                          }
                         },
                         style: ElevatedButton.styleFrom(backgroundColor: Colors.white, foregroundColor: Colors.green),
                         child: const Text("GO LIVE"),
@@ -411,7 +446,7 @@ class _UserDashboardState extends State<UserDashboard> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: [
-            _actionButton('Image\nDetection', Icons.camera_alt, const DetectionScreen()),
+            _actionButton('Image\nDetection', Icons.camera_alt, const DetectionScreen(), requiresDevice: false),
             _actionButton('Audio\nDetection', Icons.mic, const AudioDetectionScreen()),
           ],
         ),
@@ -498,9 +533,11 @@ class _UserDashboardState extends State<UserDashboard> {
     );
   }
 
-  Widget _actionButton(String label, IconData icon, Widget screen) {
+  Widget _actionButton(String label, IconData icon, Widget screen, {bool requiresDevice = true}) {
     return GestureDetector(
-      onTap: () => _protectedNavigation(screen),
+      onTap: () => requiresDevice
+          ? _protectedNavigation(screen)
+          : Navigator.push(context, MaterialPageRoute(builder: (_) => screen)),
       child: Column(children: [
         Container(width: 70, height: 70, decoration: BoxDecoration(borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.green, width: 2)), child: Icon(icon, color: Colors.green, size: 35)),
         const SizedBox(height: 5),
