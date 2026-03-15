@@ -5,9 +5,9 @@ import shutil
 source_train = r"C:\Users\jessi\Downloads\archive (1)\seg_train\seg_train"
 source_test = r"C:\Users\jessi\Downloads\archive (1)\seg_test\seg_test"
 
-train_out = r"C:\My\RIT\S8\Project\WingTrace\ml_model\Image Gate Keeper Model\dataset\train\noise"
-val_out = r"C:\My\RIT\S8\Project\WingTrace\ml_model\Image Gate Keeper Model\dataset\val\noise"
-test_out = r"C:\My\RIT\S8\Project\WingTrace\ml_model\Image Gate Keeper Model\dataset\test\noise"
+train_out = r"C:\My\RIT\S8\Project\WingTrace\ml_model\Image Gate Keeper Model\dataset\train\neither"
+val_out = r"C:\My\RIT\S8\Project\WingTrace\ml_model\Image Gate Keeper Model\dataset\val\neither"
+test_out = r"C:\My\RIT\S8\Project\WingTrace\ml_model\Image Gate Keeper Model\dataset\test\neither"
 
 os.makedirs(train_out, exist_ok=True)
 os.makedirs(val_out, exist_ok=True)
@@ -58,4 +58,4 @@ for src in sources:
 
         print(f"{subclass} -> Train:{len(train_imgs)} Val:{len(val_imgs)} Test:{len(test_imgs)}")
 
-print("Noise dataset split finished")
+print("neither dataset split finished")
