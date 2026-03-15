@@ -7,6 +7,9 @@ ml_model/Image Gate Keeper Model/dataset
 # Python cache
 __pycache__/
 *.pyc
+*.wav
+*.jpg
+*.npy
 
 
 # OS files
