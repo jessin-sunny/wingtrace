@@ -60,7 +60,7 @@ def main():
     # ])
 
     # Direct image path
-    image_path = r"C:\Users\jessi\Downloads\WhatsApp Image 2026-03-13 at 5.28.25 PM.jpeg"
+    image_path = r"C:\Users\jessi\Downloads\WhatsApp Image 2026-03-15 at 9.32.27 PM.jpeg"
 
     image = Image.open(image_path).convert("RGB")
 

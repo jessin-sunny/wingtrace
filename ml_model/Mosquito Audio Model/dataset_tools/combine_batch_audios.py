@@ -1,10 +1,10 @@
 import os
 import wave
 
-input_folder = r"C:\My\RIT\S8\Project\Dataset\Audio\Mosquito_3000\Ae. aegypti"
+input_folder = r"C:\My\RIT\S8\Project\Dataset\Audio\Mosquito_3000\C. quinquefasciatus"
 
-batch3_output = "aegypti_batch3.wav"
-batch4_output = "aegypti_batch4_fan.wav"
+batch3_output = "quinquefasciatus_batch5.wav"
+batch4_output = "quinquefasciatus_batch6_field.wav"
 
 step = 12
 files_per_batch = 125
@@ -16,7 +16,7 @@ def combine_files(start_index, output_file):
 
     for i in range(files_per_batch):
         idx = start_index + i * step
-        filename = f"Ae. aegypti_{idx:05d}.wav"
+        filename = f"C. quinquefasciatus_{idx:05d}.wav"
         filepath = os.path.join(input_folder, filename)
 
         with wave.open(filepath, 'rb') as wf:
@@ -45,7 +45,7 @@ def combine_files(start_index, output_file):
 
 
 # Batch 3 (start at 1)
-combine_files(1, batch3_output)
+combine_files(2, batch3_output)
 
 # Batch 4 (start at 1501)
-combine_files(1501, batch4_output)
+combine_files(1502, batch4_output)
