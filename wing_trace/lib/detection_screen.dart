@@ -7,7 +7,6 @@ import 'package:image_picker/image_picker.dart';
 import 'package:http/http.dart' as http;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'pest_chatbot_screen.dart';
 import 'pest_details_screen.dart';
 
 class DetectionScreen extends StatefulWidget {
@@ -27,7 +26,6 @@ class _DetectionScreenState extends State<DetectionScreen> {
   String? _errorMessage;
 
   static const String _gradioBase = 'https://wingtrace-wingmodel.hf.space';
-  static const String _serverBase = 'https://wingtrace.onrender.com';
 
   /// Resolved at runtime via the HuggingFace API so we always hit the right URL.
   String? _resolvedBase;
@@ -617,21 +615,20 @@ class _DetectionScreenState extends State<DetectionScreen> {
 
   Future<void> _fetchPestInfo(String category) async {
     try {
-      final resp = await http.get(
-        Uri.parse('$_serverBase/category/${Uri.encodeComponent(category)}'),
-      ).timeout(const Duration(seconds: 20));
+      debugPrint('Fetching pest info for category: $category');
 
-      if (resp.statusCode == 200) {
-        final dynamic decoded = jsonDecode(resp.body);
-        Map<String, dynamic> infoMap;
-        if (decoded is Map) {
-          infoMap = Map<String, dynamic>.from(decoded);
-        } else if (decoded is List) {
-          infoMap = {'details': decoded.join('\n')};
-        } else {
-          infoMap = {'info': decoded.toString()};
-        }
-        if (mounted) setState(() => _pestInfo = infoMap);
+      final docSnapshot = await FirebaseFirestore.instance
+          .collection('categories')
+          .doc(category.toLowerCase())
+          .get()
+          .timeout(const Duration(seconds: 20));
+
+      if (docSnapshot.exists) {
+        final data = docSnapshot.data();
+        debugPrint('Pest info fetched: ${data?.keys.join(', ')}');
+        if (mounted) setState(() => _pestInfo = data);
+      } else {
+        debugPrint('No document found for category: $category');
       }
     } catch (e) {
       // Non-fatal – we still show the identification result
