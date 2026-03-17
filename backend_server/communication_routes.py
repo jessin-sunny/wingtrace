@@ -9,6 +9,7 @@ from email.mime.text import MIMEText
 # Blueprint
 comm_bp = Blueprint("communication", __name__)
 
+
 # Firestore
 fs = firestore.client()
 
