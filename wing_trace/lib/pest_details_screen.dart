@@ -3,14 +3,14 @@ import 'package:flutter/material.dart';
 import 'pest_chatbot_screen.dart';
 
 class PestDetailsScreen extends StatelessWidget {
-  final File imageFile;
+  final File? imageFile; // Nullable for audio detection
   final String pestType;
   final String pestCategory;
   final Map<String, dynamic>? pestInfo;
 
   const PestDetailsScreen({
     super.key,
-    required this.imageFile,
+    this.imageFile, // Changed to optional
     required this.pestType,
     required this.pestCategory,
     this.pestInfo,
@@ -41,17 +41,49 @@ class PestDetailsScreen extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Image Section
-            Container(
-              height: 300,
-              decoration: BoxDecoration(
-                color: Colors.white,
-                boxShadow: [
-                  BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 8)
-                ],
+            // Image Section (only show if image exists)
+            if (imageFile != null)
+              Container(
+                height: 300,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  boxShadow: [
+                    BoxShadow(
+                        color: Colors.black.withOpacity(0.1), blurRadius: 8)
+                  ],
+                ),
+                child: Image.file(imageFile!, fit: BoxFit.cover),
               ),
-              child: Image.file(imageFile, fit: BoxFit.cover),
-            ),
+
+            // Audio detection indicator (if no image)
+            if (imageFile == null)
+              Container(
+                height: 200,
+                margin: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Colors.green.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.green.withOpacity(0.3)),
+                ),
+                child: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.graphic_eq_rounded,
+                          size: 80, color: Colors.green[600]),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Detected via Audio Analysis',
+                        style: TextStyle(
+                          fontSize: 16,
+                          color: Colors.green[700],
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
 
             // Identification Badge
             Container(
