@@ -14,10 +14,12 @@ from threading import Lock
 from supabase import create_client
 from google.api_core.exceptions import DeadlineExceeded
 from gradio_client import Client, handle_file
+from communication_routes import comm_bp
 
 
 app = Flask(__name__)
 sock = Sock(app)
+app.register_blueprint(comm_bp)
 
 # firebase setup
 firebase_key = json.loads(os.environ["FIREBASE_KEY"])
