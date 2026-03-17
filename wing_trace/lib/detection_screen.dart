@@ -26,7 +26,7 @@ class _DetectionScreenState extends State<DetectionScreen> {
   Map<String, dynamic>? _pestInfo;  // JSON from category server
   String? _errorMessage;
 
-  static const String _gradioBase = 'https://wingtrace-wingmodel.hf.space';
+  static const String _gradioBase = 'https://wingtrace-wingmodel2.hf.space';
   static const String _serverBase = 'https://wingtrace.onrender.com';
 
   /// Resolved at runtime via the HuggingFace API so we always hit the right URL.
@@ -158,7 +158,7 @@ class _DetectionScreenState extends State<DetectionScreen> {
 
     try {
       final resp = await http.get(
-        Uri.parse('https://huggingface.co/api/spaces/wingtrace/wingmodel'),
+        Uri.parse('https://huggingface.co/api/spaces/wingtrace/wingmodel2'),
         headers: {'Accept': 'application/json'},
       ).timeout(const Duration(seconds: 15));
 
@@ -296,7 +296,7 @@ class _DetectionScreenState extends State<DetectionScreen> {
   //   throw Exception('Failed to get prediction from Gradio API');
   // }
   Future<String> _callGradioModel(String base64DataUrl) async {
-    const base = "https://wingtrace-wingmodel.hf.space";
+    const base = "https://wingtrace-wingmodel2.hf.space";
 
     // STEP 1: Upload the file to get a file reference
     // Convert base64 data URL back to bytes
