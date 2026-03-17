@@ -25,12 +25,7 @@ class _DetectionScreenState extends State<DetectionScreen> {
   Map<String, dynamic>? _pestInfo;  // JSON from category server
   String? _errorMessage;
 
-<<<<<<< HEAD
-  static const String _gradioBase = 'https://wingtrace-wingmodel2.hf.space';
-  static const String _serverBase = 'https://wingtrace.onrender.com';
-=======
   static const String _gradioBase = 'https://wingtrace-wingmodel.hf.space';
->>>>>>> 8310f16adb47b59ba492ffc27c325c8f622228dd
 
   /// Resolved at runtime via the HuggingFace API so we always hit the right URL.
   String? _resolvedBase;
