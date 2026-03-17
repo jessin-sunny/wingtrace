@@ -11,7 +11,11 @@ comm_bp = Blueprint("communication", __name__)
 
 
 # Firestore
-fs = firestore.client()
+fs = None
+
+def init_firestore(client):
+    global fs
+    fs = client
 
 # ===============================
 # CONTACT MANAGEMENT

@@ -19,7 +19,6 @@ from communication_routes import comm_bp
 
 app = Flask(__name__)
 sock = Sock(app)
-app.register_blueprint(comm_bp)
 
 # firebase setup
 firebase_key = json.loads(os.environ["FIREBASE_KEY"])
@@ -32,6 +31,15 @@ firebase_admin.initialize_app(cred, {
 
 rtdb_root = rtdb.reference()
 fs = firestore.client()   # Firestore client
+
+# IMPORT ROUTES (AFTER INIT)
+from communication_routes import comm_bp, init_firestore
+
+# Inject Firestore into routes
+init_firestore(fs)
+
+# Register blueprint
+app.register_blueprint(comm_bp)
 
 # Supabase
 SUPABASE_URL = os.environ["SUPABASE_URL"]
