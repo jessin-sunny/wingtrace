@@ -1,12 +1,14 @@
 # Contacts handling, Group Handling, Message Handling
+import os
 from flask import Blueprint, request, jsonify
 from firebase_admin import firestore
-from googletrans import Translator
+from deep_translator import GoogleTranslator
 import smtplib
 from email.mime.text import MIMEText
 
 # Blueprint
 comm_bp = Blueprint("communication", __name__)
+
 
 # Firestore
 fs = firestore.client()
@@ -453,13 +455,34 @@ def remove_from_group():
 # ===============================
 # MESSAGE GENERATION (HYBRID)
 # ===============================
-translator = Translator()
 def translate_to_malayalam(text):
     try:
-        return translator.translate(text, dest="ml").text
-    except:
-        return text
+        if not text:
+            return ""
 
+        # Handle long text safely (split if needed)
+        if len(text) > 4000:
+            chunks = [text[i:i+4000] for i in range(0, len(text), 4000)]
+            translated_chunks = []
+
+            for chunk in chunks:
+                translated = GoogleTranslator(
+                    source='auto',
+                    target='ml'
+                ).translate(chunk)
+                translated_chunks.append(translated)
+
+            return " ".join(translated_chunks)
+
+        # Normal case
+        return GoogleTranslator(
+            source='auto',
+            target='ml'
+        ).translate(text)
+
+    except Exception as e:
+        print(f"[TRANSLATION ERROR] {e}")
+        return text  # fallback to original
 
 @comm_bp.route("/generateMessage", methods=["POST"])
 def generate_message():
@@ -475,14 +498,13 @@ def generate_message():
         text_field = data.get("text", "").strip()
         include_malayalam = data.get("include_malayalam", False)
 
-        # VALIDATION
         if not message_type:
             return jsonify({"error": "message_type required"}), 400
 
         if not officer_id:
             return jsonify({"error": "officer_id required"}), 400
 
-        # FETCH OFFICER DETAILS
+        # FETCH OFFICER
         officer_doc = fs.collection("users").document(officer_id).get()
 
         if not officer_doc.exists:
@@ -497,13 +519,15 @@ def generate_message():
         english_msg = ""
         malayalam_msg = None
 
-        # GENERAL MESSAGE
+        # ===============================
+        # GENERAL
+        # ===============================
         if message_type == "General":
 
             if not text_field:
                 return jsonify({"error": "Text required for General message"}), 400
 
-            english_msg = f"""ℹ️ INFORMATION
+            english_msg = f"""🛈 INFORMATION
 
 Message:
 {text_field}
@@ -519,7 +543,7 @@ Email: {officer_email}
             if include_malayalam:
                 mal_text = translate_to_malayalam(text_field)
 
-                malayalam_msg = f"""ℹ️ വിവരങ്ങൾ
+                malayalam_msg = f"""🛈 വിവരങ്ങൾ
 
 സന്ദേശം:
 {mal_text}
@@ -532,13 +556,14 @@ Email: {officer_email}
 ഇമെയിൽ: {officer_email}
 """
 
+        # ===============================
         # WARNING / ALERT
+        # ===============================
         elif message_type in ["Warning", "Alert"]:
 
             if not species_name:
                 return jsonify({"error": "species_name required"}), 400
 
-            # 🔥 Firestore fetch (no API)
             doc_id = species_name.strip().lower().replace(" ", "_")
             species_doc = fs.collection("categories").document(doc_id).get()
 
@@ -582,8 +607,11 @@ Email: {officer_email}
 """
 
                 if include_malayalam:
-                    mal_disease = translate_to_malayalam(disease_text)
-                    mal_action = translate_to_malayalam(action_text)
+                    mal_combined = translate_to_malayalam(f"{disease_text}\n{action_text}")
+                    mal_parts = mal_combined.split("\n")
+
+                    mal_disease = "\n".join(mal_parts[:len(diseases[:3])])
+                    mal_action = "\n".join(mal_parts[len(diseases[:3]):])
 
                     malayalam_msg = f"""⚠️ മുന്നറിയിപ്പ്
 
@@ -627,8 +655,11 @@ Email: {officer_email}
 """
 
                 if include_malayalam:
-                    mal_disease = translate_to_malayalam(disease_text)
-                    mal_control = translate_to_malayalam(control_text)
+                    mal_combined = translate_to_malayalam(f"{disease_text}\n{control_text}")
+                    mal_parts = mal_combined.split("\n")
+
+                    mal_disease = "\n".join(mal_parts[:len(diseases[:3])])
+                    mal_control = "\n".join(mal_parts[len(diseases[:3]):])
 
                     malayalam_msg = f"""🚨 അലർട്ട്
 
@@ -651,15 +682,19 @@ Email: {officer_email}
         else:
             return jsonify({"error": "Invalid message_type"}), 400
 
-        # ADDITIONAL TEXT
+        # ===============================
+        # ADDITIONAL NOTES
+        # ===============================
         if text_field and message_type != "General":
             english_msg += f"\nAdditional Notes:\n{text_field}"
 
-            if include_malayalam:
+            if include_malayalam and malayalam_msg:
                 mal_extra = translate_to_malayalam(text_field)
                 malayalam_msg += f"\nകൂടുതൽ വിവരങ്ങൾ:\n{mal_extra}"
 
-        # FINAL RESPONSE
+        # ===============================
+        # RESPONSE
+        # ===============================
         response = {
             "status": "SUCCESS",
             "message": {
@@ -675,12 +710,14 @@ Email: {officer_email}
     except Exception as e:
         print(f"[GENERATE MESSAGE ERROR] {e}")
         return jsonify({"error": str(e)}), 500
-    
 
-# MESSAGE SENDING
+
+# ===============================
+# EMAIL SENDING
+# ===============================
 def send_email(to_email, subject, message):
-    sender_email = "your_email@gmail.com"
-    app_password = "your_app_password"
+    sender_email = os.environ.get("EMAIL_ID")
+    app_password = os.environ.get("EMAIL_PASS")
 
     msg = MIMEText(message)
     msg["Subject"] = subject
@@ -691,6 +728,10 @@ def send_email(to_email, subject, message):
         server.login(sender_email, app_password)
         server.send_message(msg)
 
+
+# ===============================
+# SEND MESSAGE
+# ===============================
 @comm_bp.route("/sendMessage", methods=["POST"])
 def send_message():
     try:
@@ -714,7 +755,7 @@ def send_message():
         if not english_msg:
             return jsonify({"error": "English message required"}), 400
 
-        # COLLECT CONTACT IDS FROM GROUPS
+        # MERGE CONTACT IDS
         all_contact_ids = set(contact_ids)
 
         for gid in group_ids:
@@ -722,9 +763,14 @@ def send_message():
 
             if group_doc.exists:
                 group_data = group_doc.to_dict()
+
+                # Ownership check
+                if group_data.get("officer_id") != officer_id:
+                    continue
+
                 all_contact_ids.update(group_data.get("contacts", []))
 
-        # FETCH CONTACT DETAILS
+        # FETCH CONTACTS
         contacts = []
 
         for cid in all_contact_ids:
@@ -733,7 +779,6 @@ def send_message():
             if doc.exists:
                 cdata = doc.to_dict()
 
-                # Ownership check
                 if cdata.get("officer_id") == officer_id:
                     contacts.append({
                         "name": cdata.get("name"),
@@ -741,20 +786,23 @@ def send_message():
                         "email": cdata.get("email")
                     })
 
+        # PREPARE MESSAGE
+        final_msg = english_msg
+        if malayalam_msg:
+            final_msg += "\n\n" + malayalam_msg
+
         # SEND EMAILS
         email_sent = 0
 
         if send_email_flag:
             for c in contacts:
                 if c["email"]:
-                    send_email(
-                        c["email"],
-                        "WingTrace Alert",
-                        english_msg
-                    )
-                    email_sent += 1
+                    try:
+                        send_email(c["email"], "WingTrace Alert", final_msg)
+                        email_sent += 1
+                    except Exception as e:
+                        print(f"[EMAIL FAILED] {c['email']} → {e}")
 
-        # RESPONSE
         return jsonify({
             "status": "SUCCESS",
             "total_contacts": len(contacts),

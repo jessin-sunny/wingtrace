@@ -7,4 +7,4 @@ google-cloud-firestore
 supabase
 gradio_client
 requests
-googletrans==4.0.0-rc1
+deep-translator
