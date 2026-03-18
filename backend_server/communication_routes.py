@@ -517,8 +517,8 @@ def generate_message():
         officer = officer_doc.to_dict()
 
         officer_name = officer.get("name", "Officer")
-        officer_phone = officer.get("phone", "")
-        officer_email = officer.get("email", "")
+        officer_phone = officer.get("phoneno", "")
+        officer_email = officer.get("emailid", "")
 
         english_msg = ""
         malayalam_msg = None
