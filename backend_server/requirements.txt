@@ -8,4 +8,4 @@ supabase
 gradio_client
 requests
 deep-translator
-resend
+resend==2.25.0

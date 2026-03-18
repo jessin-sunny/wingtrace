@@ -3,7 +3,7 @@ import os
 from flask import Blueprint, request, jsonify
 from firebase_admin import firestore
 from deep_translator import GoogleTranslator
-from resend import Resend
+import resend
 
 # Blueprint
 comm_bp = Blueprint("communication", __name__)
@@ -718,11 +718,12 @@ Email: {officer_email}
 # ===============================
 # EMAIL SENDING
 # ===============================
-resend = Resend(api_key=os.environ.get("RESEND_API_KEY"))
 def send_email(to_email, subject, message):
     try:
-        response = resend.emails.send({
-            "from": "WingTrace <onboarding@resend.dev>",  # or your verified email
+        resend.api_key = os.environ.get("RESEND_API_KEY")
+
+        response = resend.Emails.send({
+            "from": "WingTrace <onboarding@resend.dev>",
             "to": [to_email],
             "subject": subject,
             "text": message
