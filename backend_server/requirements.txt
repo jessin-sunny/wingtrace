@@ -8,3 +8,4 @@ supabase
 gradio_client
 requests
 deep-translator
+resend

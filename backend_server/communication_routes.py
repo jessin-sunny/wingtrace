@@ -3,8 +3,7 @@ import os
 from flask import Blueprint, request, jsonify
 from firebase_admin import firestore
 from deep_translator import GoogleTranslator
-import smtplib
-from email.mime.text import MIMEText
+from resend import Resend
 
 # Blueprint
 comm_bp = Blueprint("communication", __name__)
@@ -719,18 +718,21 @@ Email: {officer_email}
 # ===============================
 # EMAIL SENDING
 # ===============================
+resend = Resend(api_key=os.environ.get("RESEND_API_KEY"))
 def send_email(to_email, subject, message):
-    sender_email = os.environ.get("EMAIL_ID")
-    app_password = os.environ.get("EMAIL_PASS")
+    try:
+        response = resend.emails.send({
+            "from": "WingTrace <onboarding@resend.dev>",  # or your verified email
+            "to": [to_email],
+            "subject": subject,
+            "text": message
+        })
 
-    msg = MIMEText(message)
-    msg["Subject"] = subject
-    msg["From"] = sender_email
-    msg["To"] = to_email
+        print(f"[EMAIL SENT] {to_email} → {response}")
 
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-        server.login(sender_email, app_password)
-        server.send_message(msg)
+    except Exception as e:
+        print(f"[EMAIL FAILED] {to_email} → {e}")
+        raise e
 
 
 # ===============================
