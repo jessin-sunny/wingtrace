@@ -7,8 +7,10 @@
 #include <driver/i2s.h>
 #include <ArduinoJson.h>
 
-#define DHTPIN  27        // your DHT11 pin
+#define STATUS_LED_PIN 13
+#define DHTPIN  27
 #define DHTTYPE DHT11
+#define RESET_BUTTON_PIN  32
 
 #define I2S_SCK  14
 #define I2S_WS   25
@@ -16,6 +18,7 @@
 
 #define SAMPLE_RATE 16000
 #define BUFFER_LEN  256   // samples
+#define NETWORK_RESET_TIME 3000   // 3 seconds
 
 DHT dht(DHTPIN, DHTTYPE);
 WiFiClientSecure secureClient;
@@ -24,11 +27,16 @@ WiFiClientSecure secureClient;
 // CONSTANTS
 // ------------------
 const char* DEVICE_ID   = "WT12345678";
-const char* SERVER_BASE = "https://wingtrace-production.up.railway.app";
+const char* SERVER_BASE = "https://wingtrace.onrender.com";
 // weather timer variables
 unsigned long lastWeather = 0;
 const unsigned long WEATHER_INTERVAL = 60000; // 1 minute
-
+//push button variables
+unsigned long buttonPressStart = 0;
+bool buttonPressed = false;
+// status led variables
+bool ledBlinkState = false;
+unsigned long lastLedToggle = 0;
 
 // ------------------
 // OBJECTS
@@ -57,8 +65,9 @@ unsigned long lastAlive = 0;
 unsigned long lastCommandPoll = 0;
 
 const unsigned long ALIVE_INTERVAL   = 300000; // 5 min
-const unsigned long COMMAND_INTERVAL = 1000;  // 1 second
+const unsigned long COMMAND_INTERVAL = 5000;  // 5 second
 
+int32_t rawBuffer[BUFFER_LEN];   // NEW – 32-bit raw I2S capture
 int16_t audioBuffer[BUFFER_LEN];
 bool isRecording = false;
 
@@ -67,7 +76,7 @@ void initI2S() {
   i2s_config_t cfg = {
     .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
     .sample_rate = SAMPLE_RATE,
-    .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
+    .bits_per_sample = I2S_BITS_PER_SAMPLE_32BIT,
     .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
     .communication_format = I2S_COMM_FORMAT_I2S,
     .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
@@ -134,7 +143,7 @@ void handleSetup() {
   setupToken = doc["setupToken"].as<String>();
 
 
-  if (ssid == "" || password == "" || userid == "" || setupToken == "") {
+  if (ssid == "" || password == "" || userid == "") {
     server.send(400, "text/plain", "Invalid data");
     return;
   }
@@ -200,27 +209,41 @@ void startNormalMode() {
   Serial.println(WiFi.localIP());
   secureClient.setInsecure();  // accept all certificates
   if (setupToken.length() > 0) {
-    HTTPClient http;
-    http.begin(secureClient, String(SERVER_BASE) + "/onBoard");
-    http.addHeader("Content-Type", "application/json");
+      HTTPClient http;
+      http.begin(secureClient, String(SERVER_BASE) + "/onBoard");
+      http.addHeader("Content-Type", "application/json");
 
-    String payload =
-      "{\"deviceId\":\"" + String(DEVICE_ID) +
-      "\",\"userId\":\"" + userid +
-      "\",\"setupToken\":\"" + setupToken + "\"}";
+      String payload =
+        "{\"deviceId\":\"" + String(DEVICE_ID) +
+        "\",\"userId\":\"" + userid +
+        "\",\"setupToken\":\"" + setupToken + "\"}";
 
-    int code = http.POST(payload);
-    Serial.println("Onboard message sent, code: " + String(code));
-    http.end();
+      int code = http.POST(payload);
 
-    // CRITICAL: clear token immediately
-    prefs.begin("wifi", false);
-    prefs.remove("setupToken");
-    prefs.end();
+      Serial.println("Onboard HTTP code: " + String(code));
+      http.end();
+
+      if (code == 200) {
+          Serial.println("Onboard SUCCESS → removing setupToken");
+
+          prefs.begin("wifi", false);
+          prefs.remove("setupToken");
+          prefs.end();
+      }
   } else {
-    Serial.println("Already onboarded — skipping /onBoard");
+      Serial.println("Already onboarded — skipping /onBoard");
   }
   initI2S();
+  // ---- AUDIO SOCKET SETUP ----
+  audioSocket.beginSSL(
+    "wingtrace-production.up.railway.app", // host
+    443,
+    "/startAudioStream"                              // websocket path
+  );
+
+  audioSocket.onEvent(audioSocketEvent);
+  audioSocket.setReconnectInterval(5000);
+
   prefs.remove("setupToken");
 }
 
@@ -265,8 +288,6 @@ void handleCommand(String command) {
 
     Serial.println(">>> STOP AUDIO");
     isRecording = false;
-
-    // DO NOT call /stop here
   }
 
 
@@ -284,6 +305,8 @@ void pollServerCommand() {
   HTTPClient http;
   String url = String(SERVER_BASE) + "/command?deviceId=" + DEVICE_ID;
   http.begin(secureClient, url);
+  http.begin(secureClient, url);
+  http.setTimeout(4000);
   int code = http.GET();
 
   if (code == 200) {
@@ -314,25 +337,13 @@ void sendWeather() {
     return;
   }
 
-
-  float humidity = NAN;
-  float temperature = NAN;
-
-  // Try up to 3 times
-  for (int i = 0; i < 3; i++) {
-    humidity = dht.readHumidity();
-    temperature = dht.readTemperature();
-    if (!isnan(humidity) && !isnan(temperature)) {
-      break;
-    }
-    delay(2000);  // DHT needs time
-  }
+  float humidity = dht.readHumidity();
+  float temperature = dht.readTemperature();
 
   if (isnan(humidity) || isnan(temperature)) {
-    Serial.println("Failed to read from DHT sensor after retries");
-    return;
+    Serial.println("DHT read failed — skipping this cycle");
+    return;   // <-- DO NOT BLOCK
   }
-
 
   HTTPClient http;
   http.begin(secureClient, String(SERVER_BASE) + "/weather");
@@ -350,11 +361,50 @@ void sendWeather() {
   http.end();
 }
 
+// Network Reset
+void networkReset() {
+  Serial.println(">>> NETWORK RESET");
+
+  prefs.begin("wifi", false);
+  prefs.remove("ssid");
+  prefs.remove("pass");
+  prefs.end();
+
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_AP);
+
+  delay(500);
+  startSetupMode();
+}
+
+void ledOn() {
+  digitalWrite(STATUS_LED_PIN, HIGH);
+}
+
+void ledOff() {
+  digitalWrite(STATUS_LED_PIN, LOW);
+}
+
+void ledBlinkTask() {
+  unsigned long now = millis();
+  if (now - lastLedToggle >= LED_BLINK_INTERVAL) {
+    lastLedToggle = now;
+    ledBlinkState = !ledBlinkState;
+    digitalWrite(STATUS_LED_PIN, ledBlinkState ? HIGH : LOW);
+  }
+}
+
 // ------------------
 // SETUP
 // ------------------
 void setup() {
   Serial.begin(921600);
+
+  pinMode(STATUS_LED_PIN, OUTPUT);
+  ledOff();  // default OFF
+
+  pinMode(RESET_BUTTON_PIN, INPUT_PULLUP);
+
   dht.begin();
   delay(2000);
 
@@ -378,6 +428,26 @@ void loop() {
 
   unsigned long now = millis();
 
+  bool currentState = digitalRead(RESET_BUTTON_PIN);
+  static bool resetTriggered = false;   // Prevent repeated SoftAP restarts if button is held
+
+  if (currentState == LOW && !buttonPressed) {
+      buttonPressed = true;
+      buttonPressStart = millis();
+      resetTriggered = false; 
+      delay(50);
+  }
+
+  if (currentState == HIGH && buttonPressed) {
+    unsigned long pressDuration = millis() - buttonPressStart;
+    buttonPressed = false;
+
+    if (pressDuration >= NETWORK_RESET_TIME && !resetTriggered) {
+      resetTriggered = true;
+      networkReset();
+    }
+  }
+
   if (now - lastAlive > ALIVE_INTERVAL) {
     lastAlive = now;
     sendAlive();
@@ -394,8 +464,26 @@ void loop() {
   }
 
   if (isRecording) {
-    sendAudioChunk();   // continuous streaming
+    i2s_read(
+      I2S_NUM_0,
+      audioBuffer,
+      sizeof(audioBuffer),
+      &bytesRead,
+      0   // NON-BLOCKING
+    );
+
+    if (bytesRead > 0) {
+      xQueueSend(audioQueue, audioBuffer, 0);
+    }
   }
+  // send audio from queue to ws
+  if (isRecording && audioSocketConnected) {
+  int16_t tempBuf[BUFFER_LEN];
+  if (xQueueReceive(audioQueue, tempBuf, 0) == pdTRUE) {
+    audioSocket.sendBIN((uint8_t*)tempBuf, sizeof(tempBuf));
+  }
+}
+
 
 }
 
