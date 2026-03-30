@@ -653,6 +653,90 @@ def add_device():
         "deviceId": device_id
     }), 201
 
+# ADMIN: Remove Device
+@app.route("/removeDevice", methods=["DELETE"])
+def remove_device():
+
+    # ---------------------------
+    # Step 1: Admin Authentication
+    # ---------------------------
+    if not require_admin(request):
+        return jsonify({"error": "Unauthorized"}), 401
+
+    # ---------------------------
+    # Step 2: Parse Request Body
+    # ---------------------------
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "Invalid JSON"}), 400
+
+    device_id = data.get("deviceId")
+
+    if not device_id:
+        return jsonify({"error": "deviceId required"}), 400
+
+    # ---------------------------
+    # Step 3: Fetch Device
+    # ---------------------------
+    device_ref = fs.collection("devices").document(device_id)
+    device_doc = device_ref.get()
+
+    if not device_doc.exists:
+        return jsonify({"error": "Device not found"}), 404
+
+    device_data = device_doc.to_dict()
+
+    # ---------------------------
+    # Step 4: Ownership Check
+    # ---------------------------
+    if device_data.get("ownerId"):
+        return jsonify({
+            "error": "Device is currently owned",
+            "message": "Please perform factory reset before removing device"
+        }), 403
+
+    # ---------------------------
+    # Step 5: Delete Device
+    # ---------------------------
+    try:
+        # Delete from Firestore
+        device_ref.delete()
+
+        # ---------------------------
+        # Step 6: Cleanup Realtime DB
+        # ---------------------------
+        try:
+            rtdb.reference(f"devices/{device_id}").delete()
+        except Exception as e:
+            print(f"[RTDB CLEANUP FAILED] {device_id}: {str(e)}")
+
+        # ---------------------------
+        # Step 7: Clear Pending Commands
+        # ---------------------------
+        try:
+            device_commands.pop(device_id, None)
+        except Exception as e:
+            print(f"[COMMAND CLEANUP FAILED] {device_id}: {str(e)}")
+
+        # ---------------------------
+        # Step 8: Logging
+        # ---------------------------
+        print(f"[REMOVE DEVICE] {device_id} deleted by ADMIN")
+
+        # ---------------------------
+        # Step 9: Success Response
+        # ---------------------------
+        return jsonify({
+            "status": "SUCCESS",
+            "deviceId": device_id
+        }), 200
+
+    except Exception as e:
+        return jsonify({
+            "error": "Failed to delete device",
+            "details": str(e)
+        }), 500
+
 def parse_json_fields(data, fields):
 
     for f in fields:
