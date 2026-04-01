@@ -26,7 +26,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
 
   final TextEditingController _statusDeviceIdController = TextEditingController();
   Map<String, dynamic>? _statusPayload;
-  List<dynamic> _devices = [];
+  List<Map<String, dynamic>> _devices = [];
 
   // Category controls
   String _categoryType = "mosquito";
@@ -122,12 +122,18 @@ class _AdminDashboardState extends State<AdminDashboard> {
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body);
         setState(() {
-          if (data is List) {
-            _devices = data;
-          } else if (data is Map && data.containsKey("devices")) {
-            _devices = data["devices"] is List ? data["devices"] : [];
-          } else if (data is Map) {
-            _devices = data.keys.toList();
+          if (data is Map) {
+            if (data.containsKey("devices") && data["devices"] is List) {
+              _devices = (data["devices"] as List)
+                  .map((item) => {"id": item.toString(), "data": null})
+                  .toList();
+            } else {
+              _devices = data.entries
+                  .map((entry) => {"id": entry.key.toString(), "data": entry.value})
+                  .toList();
+            }
+          } else if (data is List) {
+            _devices = data.map((item) => {"id": item.toString(), "data": null}).toList();
           } else {
             _devices = [];
           }
@@ -466,9 +472,10 @@ class _AdminDashboardState extends State<AdminDashboard> {
                     .map(
                       (device) => ListTile(
                         leading: const Icon(Icons.developer_board, color: Colors.green),
-                        title: Text(device.toString()),
+                        title: Text(device["id"]?.toString() ?? "Unknown"),
+                        subtitle: _buildDeviceSubtitle(device["data"]),
                         onTap: () {
-                          _statusDeviceIdController.text = device.toString();
+                          _statusDeviceIdController.text = device["id"]?.toString() ?? "";
                         },
                       ),
                     )
@@ -655,5 +662,19 @@ class _AdminDashboardState extends State<AdminDashboard> {
 
   Widget _sectionTitle(String title) {
     return Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold));
+  }
+
+  Widget? _buildDeviceSubtitle(dynamic data) {
+    if (data is! Map) return null;
+    final status = data["status"]?.toString();
+    final lastSeen = data["last_seen"]?.toString();
+    if (status == null && lastSeen == null) return null;
+
+    final parts = [
+      if (status != null) "Status: $status",
+      if (lastSeen != null) "Last seen: $lastSeen",
+    ];
+
+    return Text(parts.join(" • "));
   }
 }
