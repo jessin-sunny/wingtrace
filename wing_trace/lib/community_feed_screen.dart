@@ -36,6 +36,72 @@ class CommunityFeedScreen extends StatelessWidget {
     return "${time.day}/${time.month}/${time.year}";
   }
 
+  Future<Map<String, dynamic>?> _loadUserContext() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return null;
+    final doc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
+    if (!doc.exists) return null;
+    final data = doc.data();
+    if (data == null) return null;
+    return {
+      'uid': uid,
+      'role': data['role']?.toString(),
+      'name': data['name']?.toString(),
+      'communityId': data['communityID']?.toString() ?? data['communityId']?.toString(),
+    };
+  }
+
+  Future<void> _showOfficerPostDialog(BuildContext context, String communityId, String authorId, String? authorName) async {
+    final TextEditingController pestController = TextEditingController();
+    final TextEditingController noteController = TextEditingController();
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Post to Community'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: pestController,
+              decoration: const InputDecoration(labelText: 'Title / Pest Type'),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: noteController,
+              decoration: const InputDecoration(labelText: 'Message'),
+              maxLines: 3,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () async {
+              final title = pestController.text.trim();
+              if (title.isEmpty) return;
+              await FirebaseFirestore.instance
+                  .collection('communities')
+                  .doc(communityId)
+                  .collection('posts')
+                  .add({
+                'authorID': authorId,
+                'authorName': authorName,
+                'pestType': title,
+                'note': noteController.text.trim(),
+                'status': 'verified',
+                'timestamp': FieldValue.serverTimestamp(),
+              });
+              if (context.mounted) Navigator.pop(ctx);
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+            child: const Text('Post', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final currentUserId = FirebaseAuth.instance.currentUser?.uid;
@@ -46,14 +112,15 @@ class CommunityFeedScreen extends StatelessWidget {
         backgroundColor: Colors.green,
         foregroundColor: Colors.white,
       ),
-      body: FutureBuilder<String?>(
-        future: _loadCommunityId(),
+      body: FutureBuilder<Map<String, dynamic>?>(
+        future: _loadUserContext(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           }
 
-          final communityId = snapshot.data;
+          final userContext = snapshot.data;
+          final communityId = userContext?['communityId']?.toString();
           if (communityId == null || communityId.isEmpty) {
             return const Center(child: Text('No community assigned.'));
           }
@@ -80,11 +147,14 @@ class CommunityFeedScreen extends StatelessWidget {
                 return const Center(child: Text('No posts yet.'));
               }
 
-              return ListView.separated(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-                itemCount: docs.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 12),
-                itemBuilder: (context, index) {
+              final currentUserId = userContext?['uid']?.toString();
+              return Stack(
+                children: [
+                  ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                    itemCount: docs.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 12),
+                    itemBuilder: (context, index) {
                   final data = docs[index].data() as Map<String, dynamic>;
                   final pestType = data['pestType']?.toString() ?? 'Unknown Pest';
                   final pestName = data['pest_name']?.toString();
@@ -94,6 +164,7 @@ class CommunityFeedScreen extends StatelessWidget {
                   final timestamp = data['timestamp'];
                   final authorId = data['authorID']?.toString();
                   final authorName = data['authorName']?.toString();
+                  final note = data['note']?.toString();
                   final isMe = authorId != null && authorId == currentUserId;
 
                   final senderLabel = isMe
@@ -145,6 +216,10 @@ class CommunityFeedScreen extends StatelessWidget {
                               style: const TextStyle(color: Colors.black54, fontSize: 12),
                             ),
                           ],
+                          if (note != null && note.isNotEmpty) ...[
+                            const SizedBox(height: 8),
+                            Text(note, style: const TextStyle(color: Colors.black87)),
+                          ],
                           const SizedBox(height: 10),
                           Wrap(
                             spacing: 6,
@@ -185,7 +260,25 @@ class CommunityFeedScreen extends StatelessWidget {
                       ),
                     ),
                   );
-                },
+                    },
+                  ),
+                  if (userContext?['role'] == 'officer')
+                    Positioned(
+                      bottom: 20,
+                      right: 20,
+                      child: FloatingActionButton.extended(
+                        onPressed: () => _showOfficerPostDialog(
+                          context,
+                          communityId,
+                          userContext?['uid']?.toString() ?? '',
+                          userContext?['name']?.toString(),
+                        ),
+                        backgroundColor: Colors.green,
+                        icon: const Icon(Icons.edit, color: Colors.white),
+                        label: const Text('New Post', style: TextStyle(color: Colors.white)),
+                      ),
+                    ),
+                ],
               );
             },
           );

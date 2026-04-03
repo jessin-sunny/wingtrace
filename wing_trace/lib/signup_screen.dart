@@ -1,4 +1,6 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../services/auth_service.dart';
 import 'user_dashboard.dart';
 import 'officer_dashboard.dart';
@@ -21,8 +23,57 @@ class _SignUpPageState extends State<SignUpPage> {
   final TextEditingController _confirmPassController = TextEditingController();
 
   final List<String> _roles = ['Regular User', 'Agricultural/Health Officer'];
+  final List<String> _officerTypes = ['health', 'agriculture'];
   String? _selectedRole;
+  String? _selectedOfficerType;
+  String? _selectedDistrict;
+  String? _selectedCommunityId;
+  String? _selectedCommunityName;
+  bool _isLoadingCommunities = false;
+  final List<Map<String, String>> _communities = [];
   bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCommunities();
+  }
+
+  Future<void> _loadCommunities() async {
+    setState(() => _isLoadingCommunities = true);
+    try {
+      final snapshot = await FirebaseFirestore.instance.collection('communities').get();
+      _communities.clear();
+      for (final doc in snapshot.docs) {
+        final data = doc.data();
+        final name = data['name']?.toString() ?? doc.id;
+        final district = data['district']?.toString() ?? 'Unknown';
+        _communities.add({
+          'id': doc.id,
+          'name': name,
+          'district': district,
+        });
+      }
+    } catch (_) {
+      // Keep list empty; UI will show no communities.
+    }
+    if (mounted) setState(() => _isLoadingCommunities = false);
+  }
+
+  List<String> get _districts {
+    final set = <String>{};
+    for (final entry in _communities) {
+      final district = entry['district'];
+      if (district != null && district.isNotEmpty) set.add(district);
+    }
+    final list = set.toList()..sort();
+    return list;
+  }
+
+  List<Map<String, String>> get _filteredCommunities {
+    if (_selectedDistrict == null) return [];
+    return _communities.where((c) => c['district'] == _selectedDistrict).toList();
+  }
 
   // --- UPDATED LOGIC ---
   void _handleSignUp() async {
@@ -31,7 +82,9 @@ class _SignUpPageState extends State<SignUpPage> {
         _emailController.text.isEmpty || 
         _phoneController.text.isEmpty || 
         _passwordController.text.isEmpty ||
-        _selectedRole == null) {
+        _selectedRole == null ||
+        _selectedDistrict == null ||
+        _selectedCommunityId == null) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please fill all fields")));
       return;
     }
@@ -68,6 +121,11 @@ class _SignUpPageState extends State<SignUpPage> {
       return;
     }
 
+    if (_selectedRole == 'Agricultural/Health Officer' && _selectedOfficerType == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Select officer type")));
+      return;
+    }
+
     setState(() => _isLoading = true);
 
     String dbRole = (_selectedRole == 'Agricultural/Health Officer') ? 'officer' : 'farmer';
@@ -84,12 +142,31 @@ class _SignUpPageState extends State<SignUpPage> {
       "emailid": _emailController.text.trim(),
       "phoneno": "+91$phone", // Added prefix as per your requirement
       "role": dbRole,
+      "officerType": dbRole == 'officer' ? _selectedOfficerType : null,
+      "communityID": _selectedCommunityId,
+      "communityId": _selectedCommunityId,
+      "communityName": _selectedCommunityName,
+      "district": _selectedDistrict,
       "profilePic": "assets/profile_pics/p1.png", // Default avatar
       "devices": [], // Empty array for new user
       "lastLogin": now, // Firestore handles DateTime objects or Strings
       "createdAt": now,
       "updatedAt": now,
     };
+
+    if (dbRole == 'officer') {
+      final isAvailable = await _validateOfficerSlot(
+        _selectedCommunityId!,
+        _selectedOfficerType!,
+      );
+      if (!isAvailable) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Officer slot already taken for this community")),
+        );
+        return;
+      }
+    }
     String? error = await _authService.signUp(
       userMap["emailid"],
       _passwordController.text.trim(),
@@ -99,6 +176,12 @@ class _SignUpPageState extends State<SignUpPage> {
     if (!mounted) return;
 
     if (error == null) {
+      if (dbRole == 'officer') {
+        await _assignOfficerToCommunity(
+          _selectedCommunityId!,
+          _selectedOfficerType!,
+        );
+      }
       // Success Logic
       if (dbRole == 'officer') {
         Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const OfficerDashboard()));
@@ -118,6 +201,26 @@ class _SignUpPageState extends State<SignUpPage> {
       setState(() => _isLoading = false);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
     }
+  }
+
+  Future<bool> _validateOfficerSlot(String communityId, String officerType) async {
+    try {
+      final doc = await FirebaseFirestore.instance.collection('communities').doc(communityId).get();
+      final data = doc.data() as Map<String, dynamic>?;
+      final officers = data?['officers'] is Map ? Map<String, dynamic>.from(data?['officers']) : <String, dynamic>{};
+      final existing = officers[officerType]?.toString();
+      return existing == null || existing.isEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _assignOfficerToCommunity(String communityId, String officerType) async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+    await FirebaseFirestore.instance.collection('communities').doc(communityId).set({
+      'officers': {officerType: uid}
+    }, SetOptions(merge: true));
   }
 
   // Simulated Bluetooth/WiFi scan
@@ -173,12 +276,61 @@ class _SignUpPageState extends State<SignUpPage> {
                         keyboardType: TextInputType.number, // Shows number pad
                         maxLength: 10, // Limits input to 10 chars automatically
                         ),
+                      if (_isLoadingCommunities)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 8),
+                          child: LinearProgressIndicator(),
+                        ),
+                      DropdownButtonFormField<String>(
+                        value: _selectedDistrict,
+                        hint: const Text('Select District'),
+                        items: _districts
+                            .map((d) => DropdownMenuItem(value: d, child: Text(d)))
+                            .toList(),
+                        onChanged: (val) {
+                          setState(() {
+                            _selectedDistrict = val;
+                            _selectedCommunityId = null;
+                            _selectedCommunityName = null;
+                          });
+                        },
+                      ),
+                      DropdownButtonFormField<String>(
+                        value: _selectedCommunityId,
+                        hint: const Text('Select Community'),
+                        items: _filteredCommunities
+                            .map((c) => DropdownMenuItem(value: c['id'], child: Text(c['name'] ?? c['id']!)))
+                            .toList(),
+                        onChanged: (val) {
+                          setState(() {
+                            _selectedCommunityId = val;
+                            _selectedCommunityName = _filteredCommunities
+                                .firstWhere((c) => c['id'] == val, orElse: () => {})['name'];
+                          });
+                        },
+                      ),
                       DropdownButtonFormField<String>(
                         value: _selectedRole,
                         hint: const Text('Select Role'),
                         items: _roles.map((r) => DropdownMenuItem(value: r, child: Text(r))).toList(),
-                        onChanged: (val) => setState(() => _selectedRole = val),
+                        onChanged: (val) {
+                          setState(() {
+                            _selectedRole = val;
+                            if (val != 'Agricultural/Health Officer') {
+                              _selectedOfficerType = null;
+                            }
+                          });
+                        },
                       ),
+                      if (_selectedRole == 'Agricultural/Health Officer')
+                        DropdownButtonFormField<String>(
+                          value: _selectedOfficerType,
+                          hint: const Text('Select Officer Type'),
+                          items: _officerTypes
+                              .map((r) => DropdownMenuItem(value: r, child: Text(r)))
+                              .toList(),
+                          onChanged: (val) => setState(() => _selectedOfficerType = val),
+                        ),
                       TextField(controller: _passwordController, obscureText: true, decoration: const InputDecoration(hintText: 'Password')),
                       TextField(controller: _confirmPassController, obscureText: true, decoration: const InputDecoration(hintText: 'Confirm Password')),
                       const SizedBox(height: 25),
