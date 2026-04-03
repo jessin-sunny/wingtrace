@@ -24,6 +24,11 @@ class _DetectionScreenState extends State<DetectionScreen> {
   String? _rawResult;               // e.g. "Mosquito -> Aedes"
   Map<String, dynamic>? _pestInfo;  // JSON from category server
   String? _errorMessage;
+  double? _confidenceScore;
+  String? _detectedPestType;
+  String? _detectedPestCategory;
+  String? _communityId;
+  bool _isSharing = false;
 
   static const String _gradioBase = 'https://wingtrace-wingmodel2.hf.space';
 
@@ -101,7 +106,13 @@ class _DetectionScreenState extends State<DetectionScreen> {
       final base64DataUrl = 'data:$mime;base64,$base64Str';
 
       final result = await _callGradioModel(base64DataUrl);
-      setState(() => _rawResult = result);
+      setState(() {
+        _rawResult = result;
+        _confidenceScore = _extractConfidenceScore(result);
+        final (pestType, pestCategory) = _splitResult(result);
+        _detectedPestType = pestType;
+        _detectedPestCategory = pestCategory;
+      });
 
       final String? category = _extractCategory(result);
 
@@ -109,8 +120,15 @@ class _DetectionScreenState extends State<DetectionScreen> {
         // Fetch pest info
         await _fetchPestInfo(category);
 
+        if (_confidenceScore == null && _pestInfo != null) {
+          _confidenceScore = _extractConfidenceFromInfo(_pestInfo!);
+        }
+
         // Save to Firestore
         await _saveDetectionToFirestore(result, category);
+
+        // Auto-share to community (status decides verified vs pending)
+        await _autoShareToCommunity();
 
         // Navigate to details screen
         if (mounted) {
@@ -127,11 +145,10 @@ class _DetectionScreenState extends State<DetectionScreen> {
             ),
           );
 
-          // Reset state after returning from details screen
+          // Reset image only; keep result for optional share review
           if (mounted) {
             setState(() {
               _selectedImage = null;
-              _rawResult = null;
               _pestInfo = null;
             });
           }
@@ -655,6 +672,94 @@ class _DetectionScreenState extends State<DetectionScreen> {
     } catch (e) {
       debugPrint('Firestore save error: $e');
     }
+  }
+
+  void _showSnack(String message, {Color? color}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: color),
+    );
+  }
+
+  Future<String?> _loadCommunityId() async {
+    if (_communityId != null) return _communityId;
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return null;
+
+    try {
+      final doc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
+      if (doc.exists) {
+        final data = doc.data();
+        _communityId = data?['communityID']?.toString();
+      }
+    } catch (e) {
+      debugPrint('Community ID fetch error: $e');
+    }
+
+    return _communityId;
+  }
+
+  double? _extractConfidenceScore(String raw) {
+    final percentMatch = RegExp(r'(\d{1,3}(?:\.\d+)?)\s*%').firstMatch(raw);
+    if (percentMatch != null) {
+      final value = double.tryParse(percentMatch.group(1) ?? '');
+      if (value != null) return (value / 100).clamp(0.0, 1.0);
+    }
+
+    final decimalMatch = RegExp(r'(?:(?:confidence|score)\s*[:=]?\s*)?([01]\.\d+)').firstMatch(raw.toLowerCase());
+    if (decimalMatch != null) {
+      final value = double.tryParse(decimalMatch.group(1) ?? '');
+      if (value != null) return value.clamp(0.0, 1.0);
+    }
+
+    return null;
+  }
+
+  double? _extractConfidenceFromInfo(Map<String, dynamic> info) {
+    final raw = info['confidence'] ?? info['confidenceScore'] ?? info['score'];
+    if (raw is num) return raw.toDouble().clamp(0.0, 1.0);
+    if (raw is String) {
+      final value = double.tryParse(raw);
+      if (value != null) return value.clamp(0.0, 1.0);
+    }
+    return null;
+  }
+
+  Future<void> _autoShareToCommunity() async {
+    final communityId = await _loadCommunityId();
+    if (communityId == null || communityId.isEmpty) return;
+    await _shareToCommunity(communityId);
+  }
+
+  Future<void> _shareToCommunity(String communityId) async {
+    if (_detectedPestCategory == null) return;
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+
+    setState(() => _isSharing = true);
+    try {
+      final status = (_confidenceScore != null && _confidenceScore! > 0.8)
+          ? 'verified'
+          : 'pending';
+      await FirebaseFirestore.instance
+          .collection('communities')
+          .doc(communityId)
+          .collection('posts')
+          .add({
+        'authorID': uid,
+        'confidence': _confidenceScore,
+        'pestType': _detectedPestCategory,
+        'status': status,
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+
+      _showSnack('Shared to community', color: Colors.green);
+    } catch (e) {
+      debugPrint('Share error: $e');
+      _showSnack('Failed to share', color: Colors.red);
+    }
+
+    setState(() => _isSharing = false);
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────

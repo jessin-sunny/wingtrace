@@ -20,6 +20,7 @@ import 'last_detected_screen.dart';
 import 'pest_chatbot_screen.dart';
 import 'device_setup_screen.dart';
 import 'audio_detection_screen.dart';
+import 'community_feed_screen.dart';
 
 class UserDashboard extends StatefulWidget {
   const UserDashboard({super.key});
@@ -230,6 +231,7 @@ class _UserDashboardState extends State<UserDashboard> {
           bool hasSetup = false;
           String name = "Guest User";
           String profilePic = "";
+          String? communityId;
 
           if (snapshot.hasData && snapshot.data!.exists) {
             final data = snapshot.data!.data() as Map<String, dynamic>;
@@ -246,6 +248,8 @@ class _UserDashboardState extends State<UserDashboard> {
             } else {
               _assignDefaultProfilePic();
             }
+
+            communityId = data['communityID']?.toString() ?? data['communityId']?.toString();
 
             if (!hasSetup && _isLive) {
               WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -289,6 +293,8 @@ class _UserDashboardState extends State<UserDashboard> {
                       ),
                       
                       _buildSummarySection(),
+
+                      _buildCommunitySection(communityId),
 
                       // 🔹 Real-time Weather Stats (RTDB)
                       if (_isLive && _realDeviceId != null) _buildRTDBWeather(_realDeviceId!),
@@ -439,6 +445,114 @@ class _UserDashboardState extends State<UserDashboard> {
     );
   }
 
+  Widget _buildCommunitySection(String? communityId) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 20),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.green, width: 1),
+        color: Colors.white,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.people_alt_outlined, color: Colors.green),
+              const SizedBox(width: 8),
+              const Text(
+                'Community Updates',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+              const Spacer(),
+              TextButton(
+                onPressed: communityId == null || communityId.isEmpty
+                    ? null
+                    : () => Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const CommunityFeedScreen()),
+                        ),
+                child: const Text('Open Feed'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          if (communityId == null || communityId.isEmpty)
+            const Text(
+              'No community linked to your account yet.',
+              style: TextStyle(color: Colors.grey),
+            )
+          else
+            _buildLatestCommunityPost(communityId),
+          const SizedBox(height: 6),
+          const Text(
+            'Only verified detections are shown. Exact house location is never shared.',
+            style: TextStyle(color: Colors.grey, fontSize: 11),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLatestCommunityPost(String communityId) {
+    final query = FirebaseFirestore.instance
+      .collection('communities')
+      .doc(communityId)
+      .collection('posts')
+      .orderBy('timestamp', descending: true)
+      .limit(1);
+
+    return StreamBuilder<QuerySnapshot>(
+      stream: query.snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8),
+            child: LinearProgressIndicator(),
+          );
+        }
+
+        final docs = snapshot.data?.docs ?? [];
+        if (docs.isEmpty) {
+          return const Text('No verified posts yet.', style: TextStyle(color: Colors.grey));
+        }
+
+        final data = docs.first.data() as Map<String, dynamic>;
+        final pestType = data['pestType']?.toString() ?? 'Unknown Pest';
+        final timestamp = data['timestamp'];
+
+        return Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.green.withOpacity(0.08),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.check_circle, color: Colors.green),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      pestType,
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(_timeAgoFromTimestamp(timestamp), style: const TextStyle(color: Colors.grey)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildActionButtons() {
     return Column(
       children: [
@@ -511,6 +625,26 @@ class _UserDashboardState extends State<UserDashboard> {
         ),
       ),
     );
+  }
+
+  String _timeAgoFromTimestamp(dynamic timestamp) {
+    DateTime? time;
+
+    if (timestamp is Timestamp) {
+      time = timestamp.toDate();
+    } else if (timestamp is String) {
+      time = DateTime.tryParse(timestamp);
+    }
+
+    if (time == null) return "Just now";
+
+    final diff = DateTime.now().difference(time);
+    if (diff.inMinutes < 1) return "Just now";
+    if (diff.inMinutes < 60) return "${diff.inMinutes} mins ago";
+    if (diff.inHours < 24) return "${diff.inHours} hours ago";
+    if (diff.inDays < 7) return "${diff.inDays} days ago";
+
+    return "${time.day}/${time.month}/${time.year}";
   }
 
   Widget _envStatItem(IconData icon, String value, String label) {
