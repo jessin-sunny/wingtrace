@@ -29,6 +29,7 @@ class _DetectionScreenState extends State<DetectionScreen> {
   String? _detectedPestCategory;
   String? _communityId;
   bool _isSharing = false;
+  String? _shareStatus;
 
   static const String _gradioBase = 'https://wingtrace-wingmodel2.hf.space';
 
@@ -50,6 +51,7 @@ class _DetectionScreenState extends State<DetectionScreen> {
         _rawResult = null;
         _pestInfo = null;
         _errorMessage = null;
+        _shareStatus = null;
       });
       await _identifyPest();
     }
@@ -690,7 +692,7 @@ class _DetectionScreenState extends State<DetectionScreen> {
       final doc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
       if (doc.exists) {
         final data = doc.data();
-        _communityId = data?['communityID']?.toString();
+        _communityId = data?['communityID']?.toString() ?? data?['communityId']?.toString();
       }
     } catch (e) {
       debugPrint('Community ID fetch error: $e');
@@ -727,7 +729,10 @@ class _DetectionScreenState extends State<DetectionScreen> {
 
   Future<void> _autoShareToCommunity() async {
     final communityId = await _loadCommunityId();
-    if (communityId == null || communityId.isEmpty) return;
+    if (communityId == null || communityId.isEmpty) {
+      setState(() => _shareStatus = 'Skipped: no community linked');
+      return;
+    }
     await _shareToCommunity(communityId);
   }
 
@@ -741,6 +746,7 @@ class _DetectionScreenState extends State<DetectionScreen> {
       final status = (_confidenceScore != null && _confidenceScore! > 0.8)
           ? 'verified'
           : 'pending';
+      setState(() => _shareStatus = 'Sharing to $communityId...');
       await FirebaseFirestore.instance
           .collection('communities')
           .doc(communityId)
@@ -753,9 +759,11 @@ class _DetectionScreenState extends State<DetectionScreen> {
         'timestamp': FieldValue.serverTimestamp(),
       });
 
+      setState(() => _shareStatus = 'Shared to $communityId ($status)');
       _showSnack('Shared to community', color: Colors.green);
     } catch (e) {
       debugPrint('Share error: $e');
+      setState(() => _shareStatus = 'Share failed: $e');
       _showSnack('Failed to share', color: Colors.red);
     }
 
@@ -812,10 +820,35 @@ class _DetectionScreenState extends State<DetectionScreen> {
             if (_errorMessage != null && !_isAnalyzing) _buildErrorCard(),
             if (_rawResult != null && !_isAnalyzing && _extractCategory(_rawResult!) == null)
               _buildNoResultCard(),
+            if (_shareStatus != null && !_isAnalyzing) _buildShareStatusCard(),
             const SizedBox(height: 20),
             _buildActionButton(),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildShareStatusCard() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.green.withOpacity(0.3)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.share, color: Colors.green),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              _shareStatus ?? '',
+              style: const TextStyle(color: Colors.black87, fontSize: 13),
+            ),
+          ),
+        ],
       ),
     );
   }

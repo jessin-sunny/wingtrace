@@ -483,8 +483,11 @@ class _UserDashboardState extends State<UserDashboard> {
               'No community linked to your account yet.',
               style: TextStyle(color: Colors.grey),
             )
-          else
+          else ...[
             _buildLatestCommunityPost(communityId),
+            const SizedBox(height: 12),
+            _buildAssignedOfficersCard(communityId),
+          ],
           const SizedBox(height: 6),
           const Text(
             'Only verified detections are shown. Exact house location is never shared.',
@@ -548,6 +551,81 @@ class _UserDashboardState extends State<UserDashboard> {
               ),
             ],
           ),
+        );
+      },
+    );
+  }
+
+  Widget _buildAssignedOfficersCard(String communityId) {
+    return StreamBuilder<DocumentSnapshot>(
+      stream: FirebaseFirestore.instance.collection('communities').doc(communityId).snapshots(),
+      builder: (context, snapshot) {
+        final data = snapshot.data?.data() as Map<String, dynamic>?;
+        final officers = data?['officers'] is Map
+            ? Map<String, dynamic>.from(data?['officers'])
+            : <String, dynamic>{};
+
+        if (officers.isEmpty) {
+          return const Text('No assigned officers yet.', style: TextStyle(color: Colors.grey));
+        }
+
+        final officerIds = officers.values.map((value) => value.toString()).toList();
+
+        return FutureBuilder<List<DocumentSnapshot>>(
+          future: Future.wait(
+            officerIds.map((id) => FirebaseFirestore.instance.collection('users').doc(id).get()),
+          ),
+          builder: (context, officerSnapshot) {
+            if (officerSnapshot.connectionState == ConnectionState.waiting) {
+              return const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: LinearProgressIndicator(),
+              );
+            }
+
+            final officerDocs = officerSnapshot.data ?? [];
+            return Card(
+              elevation: 2,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Assigned Officers', style: TextStyle(fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 8),
+                    ...officerDocs.map((doc) {
+                      final officerData = doc.data() as Map<String, dynamic>?;
+                      final name = officerData?['name']?.toString() ?? doc.id;
+                      final phone = officerData?['phoneno']?.toString();
+                      final type = officerData?['officerType']?.toString();
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.badge_outlined, size: 18, color: Colors.green),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(name, style: const TextStyle(fontWeight: FontWeight.w600)),
+                                  if (type != null && type.isNotEmpty)
+                                    Text(type, style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                                  if (phone != null && phone.isNotEmpty)
+                                    Text(phone, style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
+                  ],
+                ),
+              ),
+            );
+          },
         );
       },
     );
