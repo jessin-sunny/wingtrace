@@ -47,7 +47,7 @@ SUPABASE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 # HuggingFace audio model
-hf_client = Client("wingtrace/audiomodel")
+hf_client = Client("wingtrace/unified-audio")
 
 
 devices_lock = Lock()   # Thread Safety
