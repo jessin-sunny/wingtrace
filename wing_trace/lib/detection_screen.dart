@@ -468,20 +468,19 @@ class _DetectionScreenState extends State<DetectionScreen> {
               if (decoded is Map && decoded['output'] is Map) {
                 final output = decoded['output'] as Map;
                 if (output['data'] is List && (output['data'] as List).isNotEmpty) {
-                  result = output['data'][0]?.toString();
+                  result = (output['data'] as List).join('\n').trim();
                 }
               }
 
               // Format 2: Direct array ["result"]
               if (result == null && decoded is List && decoded.isNotEmpty) {
-                result = decoded[0]?.toString();
+                result = decoded.join('\n').trim();
               }
 
-              // Format 3: {data: [...]}
               if (result == null && decoded is Map && decoded['data'] is List) {
                 final dataList = decoded['data'] as List;
                 if (dataList.isNotEmpty) {
-                  result = dataList[0]?.toString();
+                  result = dataList.join('\n').trim();
                 }
               }
 
@@ -553,13 +552,13 @@ class _DetectionScreenState extends State<DetectionScreen> {
               }
               // Gradio 5.x streamed array: ["result"]
               else if (data is List && data.isNotEmpty) {
-                result = data[0].toString().trim();
+                result = data.join('\n').trim();
               }
               // Gradio 5.x wrapped: {"data": ["result"]}
               else if (data is Map && data.containsKey('data')) {
                 final dl = data['data'] as List?;
                 if (dl != null && dl.isNotEmpty) {
-                  result = dl[0].toString().trim();
+                  result = dl.join('\n').trim();
                 }
               }
 
@@ -605,7 +604,8 @@ class _DetectionScreenState extends State<DetectionScreen> {
   /// Returns the category slug (e.g. "aedes") from "Mosquito -> Aedes",
   /// or null if the model could not identify a pest.
   String? _extractCategory(String result) {
-    final cleaned = result
+    final firstLine = result.split('\n').first;
+    final cleaned = firstLine
         .replaceFirst(RegExp(r'^Result:\s*', caseSensitive: false), '')
         .trim();
 
@@ -747,6 +747,13 @@ class _DetectionScreenState extends State<DetectionScreen> {
       final status = (_confidenceScore != null && _confidenceScore! > 0.8)
           ? 'verified'
           : 'pending';
+
+      if (status == 'pending') {
+        setState(() => _shareStatus = 'Skipped sharing (low confidence)');
+        setState(() => _isSharing = false);
+        return;
+      }
+
       setState(() => _shareStatus = 'Sharing to $communityId...');
       await FirebaseFirestore.instance
           .collection('communities')
@@ -775,7 +782,8 @@ class _DetectionScreenState extends State<DetectionScreen> {
 
   /// Splits "Mosquito -> Aedes" into type = "Mosquito", category = "Aedes"
   (String, String) _splitResult(String raw) {
-    final cleaned = raw.replaceFirst(RegExp(r'^Result:\s*', caseSensitive: false), '');
+    final firstLine = raw.split('\n').first;
+    final cleaned = firstLine.replaceFirst(RegExp(r'^Result:\s*', caseSensitive: false), '');
 
     // Handle both ASCII and Unicode arrows
     final parts = cleaned.contains('→')

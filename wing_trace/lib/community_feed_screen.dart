@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'pest_details_screen.dart';
 
 class CommunityFeedScreen extends StatelessWidget {
   const CommunityFeedScreen({super.key});
@@ -49,6 +50,54 @@ class CommunityFeedScreen extends StatelessWidget {
       'name': data['name']?.toString(),
       'communityId': data['communityID']?.toString() ?? data['communityId']?.toString(),
     };
+  }
+
+  Future<void> _openPestDetails(BuildContext context, String? category, String? pestType) async {
+    if (category == null || category.isEmpty) return;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator(color: Colors.green)),
+    );
+
+    try {
+      final docId = category.toLowerCase().replaceAll(' ', '_');
+      final docSnapshot = await FirebaseFirestore.instance
+          .collection('categories')
+          .doc(docId)
+          .get()
+          .timeout(const Duration(seconds: 15));
+
+      if (context.mounted) Navigator.pop(context); // pop loading dialog
+
+      Map<String, dynamic>? pestInfo;
+      if (docSnapshot.exists) {
+        pestInfo = docSnapshot.data();
+      }
+
+      if (context.mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => PestDetailsScreen(
+              imageFile: null, // No image stored
+              pestType: pestType ?? "Unknown",
+              pestCategory: category,
+              pestInfo: pestInfo,
+              source: "community",
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) Navigator.pop(context);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to load details: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
   }
 
   Future<void> _showOfficerPostDialog(BuildContext context, String communityId, String authorId, String? authorName) async {
@@ -142,9 +191,14 @@ class CommunityFeedScreen extends StatelessWidget {
                 return const Center(child: CircularProgressIndicator());
               }
 
-                  final docs = postSnapshot.data?.docs ?? [];
+              final allDocs = postSnapshot.data?.docs ?? [];
+              final docs = allDocs.where((doc) {
+                final data = doc.data() as Map<String, dynamic>;
+                return data['status'] == 'verified';
+              }).toList();
+
               if (docs.isEmpty) {
-                return const Center(child: Text('No posts yet.'));
+                return const Center(child: Text('No verified posts yet.'));
               }
 
               final currentUserId = userContext?['uid']?.toString();
@@ -175,9 +229,17 @@ class CommunityFeedScreen extends StatelessWidget {
 
                   return Align(
                     alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-                    child: Container(
-                      constraints: const BoxConstraints(maxWidth: 320),
-                      padding: const EdgeInsets.all(14),
+                    child: InkWell(
+                      onTap: () => _openPestDetails(context, category ?? pestName, pestType),
+                      borderRadius: BorderRadius.only(
+                        topLeft: const Radius.circular(18),
+                        topRight: const Radius.circular(18),
+                        bottomLeft: Radius.circular(isMe ? 18 : 4),
+                        bottomRight: Radius.circular(isMe ? 4 : 18),
+                      ),
+                      child: Container(
+                        constraints: const BoxConstraints(maxWidth: 320),
+                        padding: const EdgeInsets.all(14),
                       decoration: BoxDecoration(
                         color: isMe ? Colors.green[200] : Colors.white,
                         borderRadius: BorderRadius.only(
@@ -257,6 +319,7 @@ class CommunityFeedScreen extends StatelessWidget {
                             ],
                           )
                         ],
+                      ),
                       ),
                     ),
                   );

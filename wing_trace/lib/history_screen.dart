@@ -3,18 +3,23 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'pest_details_screen.dart';
 
 class DetectionItem {
   final String pest;
   final DateTime date;
   final String confidence;
   final String type; // "Image" or "Audio"
+  final String? category;
+  final String? rawPestType;
 
   DetectionItem({
     required this.pest,
     required this.date,
     required this.confidence,
     required this.type,
+    this.category,
+    this.rawPestType,
   });
 }
 
@@ -116,6 +121,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
                 date: date,
                 confidence: confStr,
                 type: "Audio",
+                category: entry['category']?.toString() ?? pestName.split('→').last.trim(),
+                rawPestType: "Audio Detection",
               ));
             });
           }
@@ -154,6 +161,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
             date: date,
             confidence: confStr,
             type: "Image",
+            category: data['category']?.toString(),
+            rawPestType: "Image Detection",
           ));
         }
       } catch (e) {
@@ -209,6 +218,54 @@ class _HistoryScreenState extends State<HistoryScreen> {
   String _formatDate(DateTime time) {
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     return "${months[time.month - 1]} ${time.day}, ${time.year}";
+  }
+
+  Future<void> _openPestDetails(DetectionItem item) async {
+    if (item.category == null || item.category!.isEmpty) return;
+    
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator(color: Colors.green)),
+    );
+
+    try {
+      final docId = item.category!.toLowerCase().replaceAll(' ', '_');
+      final docSnapshot = await FirebaseFirestore.instance
+          .collection('categories')
+          .doc(docId)
+          .get()
+          .timeout(const Duration(seconds: 15));
+
+      if (mounted) Navigator.pop(context); // pop loading dialog
+
+      Map<String, dynamic>? pestInfo;
+      if (docSnapshot.exists) {
+        pestInfo = docSnapshot.data();
+      }
+
+      if (mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => PestDetailsScreen(
+              imageFile: null, // No image stored
+              pestType: item.rawPestType ?? "Unknown",
+              pestCategory: item.category!,
+              pestInfo: pestInfo,
+              source: item.type.toLowerCase(),
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) Navigator.pop(context);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to load details: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
   }
 
   @override
@@ -292,6 +349,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                               ),
                               title: Text(item.pest, style: const TextStyle(fontWeight: FontWeight.bold)),
                               subtitle: Text("Date: ${_formatDate(item.date)}"),
+                              onTap: () => _openPestDetails(item),
                               trailing: Column(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
