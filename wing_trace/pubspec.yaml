@@ -34,6 +34,7 @@ dependencies:
   google_generative_ai: ^0.4.0
   animated_text_kit: ^4.2.2
   http: ^1.2.0
+  google_maps_flutter: ^2.6.0
   network_info_plus: ^6.0.0 # To check which WiFi SSID you are currently on
   connectivity_plus: ^6.0.0 # To detect when WiFi connects/disconnects
   permission_handler: ^11.0.0 # WiFi name requires Location permission

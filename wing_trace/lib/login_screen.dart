@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/auth_service.dart'; // Import your service
 import 'signup_screen.dart';
 import 'officer_dashboard.dart';
+import 'admin_dashboard.dart';
 import 'user_dashboard.dart';
 
 class LoginPage extends StatefulWidget {
@@ -65,7 +66,9 @@ class _LoginPageState extends State<LoginPage> {
           String role = userDoc.get('role'); // 'farmer' or 'officer'
 
           // D. NAVIGATE BASED ON ROLE AND SETUP STATUS
-          if (role == 'officer' || role == 'admin') {
+          if (role == 'admin') {
+            Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const AdminDashboard()));
+          } else if (role == 'officer') {
             Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const OfficerDashboard()));
           } else {
             // Both "Skipped" and "Completed" users go to the Dashboard.
