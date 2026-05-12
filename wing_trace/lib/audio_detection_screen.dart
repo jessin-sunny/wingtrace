@@ -184,10 +184,11 @@ class _AudioDetectionScreenState extends State<AudioDetectionScreen> with Single
             context,
             MaterialPageRoute(
               builder: (_) => PestDetailsScreen(
-                imageFile: null, // No image for audio detection
+                imageFile: null,
                 pestType: pestType,
                 pestCategory: pestCategory,
                 pestInfo: pestInfo,
+                source: 'audio',
               ),
             ),
           );
@@ -205,18 +206,17 @@ class _AudioDetectionScreenState extends State<AudioDetectionScreen> with Single
     }
   }
 
-  // Extract category from species name
+  // Extract category from species name to match Firestore Document IDs
   // "Anopheles (Malaria Vector)" -> "anopheles"
-  // "Aedes" -> "aedes"
+  // "Aphidoletes Aphidimyza" -> "aphidoletes_aphidimyza"
   String? _extractCategoryFromSpecies(String species) {
-    // Remove anything in parentheses and trim
+    // 1. Remove anything in parentheses and trim the edges
     final cleaned = species.replaceAll(RegExp(r'\s*\([^)]*\)'), '').trim().toLowerCase();
 
     if (cleaned.isEmpty) return null;
 
-    // Take the first word as category
-    final words = cleaned.split(' ');
-    return words.first;
+    // 2. Replace spaces with underscores so it matches Firebase exactly
+    return cleaned.replaceAll(' ', '_');
   }
 
   // Parse species into type and category
@@ -239,9 +239,13 @@ class _AudioDetectionScreenState extends State<AudioDetectionScreen> with Single
     try {
       debugPrint('Fetching pest info for category: $category');
 
+      // Normalize category: convert to lowercase and replace spaces with underscores
+      final normalizedCategory = category.toLowerCase().replaceAll(' ', '_');
+      debugPrint('Normalized category key: $normalizedCategory');
+
       final docSnapshot = await FirebaseFirestore.instance
           .collection('categories')
-          .doc(category.toLowerCase())
+          .doc(normalizedCategory)
           .get()
           .timeout(const Duration(seconds: 20));
 
@@ -250,7 +254,7 @@ class _AudioDetectionScreenState extends State<AudioDetectionScreen> with Single
         debugPrint('Pest info fetched: ${data?.keys.join(', ')}');
         return data;
       } else {
-        debugPrint('No document found for category: $category');
+        debugPrint('No document found for category: $normalizedCategory');
       }
     } catch (e) {
       debugPrint('Pest info fetch error: $e');

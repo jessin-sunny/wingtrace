@@ -143,6 +143,7 @@ class _DetectionScreenState extends State<DetectionScreen> {
                 pestType: pestType,
                 pestCategory: pestCategory,
                 pestInfo: _pestInfo,
+                source: 'image',
               ),
             ),
           );

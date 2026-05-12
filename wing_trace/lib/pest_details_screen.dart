@@ -7,13 +7,15 @@ class PestDetailsScreen extends StatelessWidget {
   final String pestType;
   final String pestCategory;
   final Map<String, dynamic>? pestInfo;
+  final String source; // 'image' or 'audio'
 
   const PestDetailsScreen({
     super.key,
-    this.imageFile, // Changed to optional
+    this.imageFile,
     required this.pestType,
     required this.pestCategory,
     this.pestInfo,
+    this.source = 'image', // default to 'image'
   });
 
   String _formatKey(String key) {
@@ -219,9 +221,9 @@ class PestDetailsScreen extends StatelessWidget {
                       onPressed: () => Navigator.pop(context),
                       icon:
                           const Icon(Icons.arrow_back, color: Colors.green),
-                      label: const Text(
-                        'Analyze Another Image',
-                        style: TextStyle(
+                      label: Text(
+                        source == 'audio' ? 'Analyze Another Audio' : 'Analyze Another Image',
+                        style: const TextStyle(
                           color: Colors.green,
                           fontSize: 16,
                           fontWeight: FontWeight.bold,
