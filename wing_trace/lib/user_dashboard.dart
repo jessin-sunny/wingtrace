@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_database/firebase_database.dart'; // 🔹 Required for weather stats
+import 'package:firebase_core/firebase_core.dart';
 import 'dart:convert';
 import 'dart:async';
 import 'package:animated_text_kit/animated_text_kit.dart';
@@ -36,7 +37,10 @@ class _UserDashboardState extends State<UserDashboard> {
   Timer? _factTimer;
 
   // Realtime Database Reference
-  final DatabaseReference _dbRef = FirebaseDatabase.instance.ref();
+  final DatabaseReference _dbRef = FirebaseDatabase.instanceFor(
+    app: Firebase.app(),
+    databaseURL: 'https://wingtrace-ead16-default-rtdb.firebaseio.com',
+  ).ref();
   String? _realDeviceId; // Fetched from Firestore
 
   final List<String> _pestFacts = [
@@ -647,8 +651,8 @@ class _UserDashboardState extends State<UserDashboard> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: [
-            _actionButton('View\nHistory', Icons.history_edu, const HistoryScreen()),
-            _actionButton('Analytics', Icons.insights, const AnalyticsScreen()),
+            _actionButton('View\nHistory', Icons.history_edu, const HistoryScreen(), requiresDevice: false),
+            _actionButton('Analytics', Icons.insights, const AnalyticsScreen(), requiresDevice: false),
           ],
         ),
       ],
@@ -740,7 +744,7 @@ class _UserDashboardState extends State<UserDashboard> {
 
   Widget _summaryItem(IconData icon, String label, Widget screen) {
     return GestureDetector(
-      onTap: () => _protectedNavigation(screen),
+      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => screen)),
       child: Column(children: [Icon(icon, color: Colors.grey[700], size: 35), Text(label, textAlign: TextAlign.center, style: const TextStyle(fontSize: 10, color: Colors.green))]),
     );
   }

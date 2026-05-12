@@ -663,12 +663,12 @@ class _DetectionScreenState extends State<DetectionScreen> {
       final uid = FirebaseAuth.instance.currentUser?.uid;
       if (uid == null) return;
       await FirebaseFirestore.instance
-          .collection('users')
-          .doc(uid)
           .collection('detections')
           .add({
+        'userId': uid,
         'pest_name': result,
         'category': category,
+        'confidence': _confidenceScore,
         'source': 'image_detection',
         'timestamp': FieldValue.serverTimestamp(),
       });
