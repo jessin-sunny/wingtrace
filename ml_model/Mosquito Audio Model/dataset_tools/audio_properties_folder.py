@@ -1,7 +1,7 @@
 import os
 import wave
 
-folder = r"C:\My\RIT\S8\Project\Audio Recordings\Orginal"
+folder = r"C:\My\RIT\S8\Project\Audio Trimmed\Bombus_terrestris"
 
 for file in os.listdir(folder):
     if file.endswith(".wav"):

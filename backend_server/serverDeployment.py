@@ -550,38 +550,98 @@ def factoryReset():
         "deviceId": device_id
     }), 200
 
+# @app.route("/command", methods=["GET"])
+# def get_command():
+#     device_id = request.args.get("deviceId", "").strip()
+#     if not device_id:
+#         return "NO_COMMAND", 200
+
+#     try:
+#         device_doc = fs.collection("devices").document(device_id).get(timeout=5)
+#     except DeadlineExceeded:
+#         print("[FIRESTORE TIMEOUT]")
+#         return "NO_COMMAND", 200
+#     except Exception as e:
+#         print(f"[FIRESTORE ERROR] {e}")
+#         return "NO_COMMAND", 200
+
+#     if not device_doc.exists:
+#         return "NO_COMMAND", 200
+
+#     if device_doc.to_dict().get("status") != "CONNECTED":
+#         return "NO_COMMAND", 200
+    
+#     status = rtdb.reference(f"devices/{device_id}/status").get()
+#     if not status or not status.get("isOnline"):
+#         return "NO_COMMAND", 200
+
+
+#     cmd_obj = device_commands.pop(device_id, None)
+#     if not cmd_obj:
+#         return "NO_COMMAND", 200
+
+#     command = cmd_obj["command"]
+#     user_id = cmd_obj.get("userId")   # stored during /reset
+
+#     if command == "RESET":
+#         # RTDB: mark offline + reset
+#         rtdb.reference(f"devices/{device_id}/status").update({
+#             "isOnline": False,
+#             "factoryReset": True
+#         })
+
+#         # Firestore: clear ownership
+#         if user_id:
+#             fs.collection("devices").document(device_id).update({
+#                 "ownerId": firestore.DELETE_FIELD,
+#                 "status": "DISCONNECTED"
+#             })
+
+#             fs.collection("users").document(user_id).update({
+#                 "devices": firestore.ArrayRemove([device_id])
+#             })
+
+#         print(f"[CMD SENT] {device_id} → RESET (ownership cleared)")
+
+#     return command, 200
+
 @app.route("/command", methods=["GET"])
 def get_command():
     device_id = request.args.get("deviceId", "").strip()
     if not device_id:
         return "NO_COMMAND", 200
 
-    try:
-        device_doc = fs.collection("devices").document(device_id).get(timeout=5)
-    except DeadlineExceeded:
-        print("[FIRESTORE TIMEOUT]")
-        return "NO_COMMAND", 200
-    except Exception as e:
-        print(f"[FIRESTORE ERROR] {e}")
-        return "NO_COMMAND", 200
-
-    if not device_doc.exists:
-        return "NO_COMMAND", 200
-
-    if device_doc.to_dict().get("status") != "CONNECTED":
-        return "NO_COMMAND", 200
-    
-    status = rtdb.reference(f"devices/{device_id}/status").get()
-    if not status or not status.get("isOnline"):
-        return "NO_COMMAND", 200
-
-
+    # 1. OPTIMIZATION: Check memory FIRST. 
+    # This prevents 99.9% of unnecessary database calls.
     cmd_obj = device_commands.pop(device_id, None)
+    
+    # If no command is queued, exit immediately. No DB hits!
     if not cmd_obj:
         return "NO_COMMAND", 200
 
+    # 2. ONLY hit Firestore/RTDB if we actually have a command to deliver
+    try:
+        device_doc = fs.collection("devices").document(device_id).get(timeout=5)
+        if not device_doc.exists or device_doc.to_dict().get("status") != "CONNECTED":
+            return "NO_COMMAND", 200
+        
+        status = rtdb.reference(f"devices/{device_id}/status").get()
+        if not status or not status.get("isOnline"):
+            return "NO_COMMAND", 200
+
+    except DeadlineExceeded:
+        print("[FIRESTORE TIMEOUT]")
+        # Put command back in queue so we don't lose it!
+        device_commands[device_id] = cmd_obj 
+        return "NO_COMMAND", 200
+    except Exception as e:
+        print(f"[FIRESTORE ERROR] {e}")
+        device_commands[device_id] = cmd_obj
+        return "NO_COMMAND", 200
+
+    # 3. If we passed the DB checks, process the command
     command = cmd_obj["command"]
-    user_id = cmd_obj.get("userId")   # stored during /reset
+    user_id = cmd_obj.get("userId")
 
     if command == "RESET":
         # RTDB: mark offline + reset
