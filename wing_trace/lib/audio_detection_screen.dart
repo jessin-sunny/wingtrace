@@ -205,18 +205,17 @@ class _AudioDetectionScreenState extends State<AudioDetectionScreen> with Single
     }
   }
 
-  // Extract category from species name
+  // Extract category from species name to match Firestore Document IDs
   // "Anopheles (Malaria Vector)" -> "anopheles"
-  // "Aedes" -> "aedes"
+  // "Aphidoletes Aphidimyza" -> "aphidoletes_aphidimyza"
   String? _extractCategoryFromSpecies(String species) {
-    // Remove anything in parentheses and trim
+    // 1. Remove anything in parentheses and trim the edges
     final cleaned = species.replaceAll(RegExp(r'\s*\([^)]*\)'), '').trim().toLowerCase();
 
     if (cleaned.isEmpty) return null;
 
-    // Take the first word as category
-    final words = cleaned.split(' ');
-    return words.first;
+    // 2. Replace spaces with underscores so it matches Firebase exactly
+    return cleaned.replaceAll(' ', '_');
   }
 
   // Parse species into type and category
